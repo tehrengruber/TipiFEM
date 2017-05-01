@@ -1,0 +1,9 @@
+struct ElementMatrix{T}
+
+end
+
+function distribute()
+  for cidx in cells(msh)
+    el_mat = local_assembler()
+    dofh[]
+end
