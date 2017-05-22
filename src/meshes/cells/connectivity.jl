@@ -47,6 +47,7 @@ end
     data::NTuple{incidentee_count(T1, T2), Index{T2}}
 
     function (::Type{Connectivity{T1, T2}}){T1 <: Cell, T2 <: Cell, N, IT}(in::NTuple{N, IT})
+      @boundscheck all(x->x!=0, in) || error("Cell ids must be non zero")
       new(in)
     end
 end
@@ -67,6 +68,11 @@ end
   Size(incidentee_count(T1, T2))
 end
 
+function vertices(c::Connectivity)
+  assert(incidentee_type(c) == subcell(incidenter_type(c), Dim{0}()))
+  c.data
+end
+
 import Base: isless, reverse
 """
 A connectivity object is less then another connectivity object if all indices
@@ -78,12 +84,6 @@ reverse(c::C) where C <: Connectivity = C(reverse(c.data))
 
 "Retrieve index of the i-th facet incident to the cell `v` belongs to"
 Base.@propagate_inbounds getindex(v::Connectivity, i::Int) = v.data[i]
-
-#@Base.pure cell_type{T <: Connectivity}(::Type{T}) = typeof(T) == UnionAll ? T.body.parameters[1] : T.parameters[1]
-#cell_type{T <: Connectivity}(::T) = cell_type(T)
-#
-#@Base.pure face_type{T <: Connectivity}(::Type{T}) = typeof(T) == UnionAll ? T.body.parameters[2] : T.parameters[2]
-#face_type{T <: Connectivity}(::T) = face_type(T)
 
 "Get the index of the `i`th vertex of a cell of type K."
 function vertex{K <: Cell}(conn::Connectivity{K}, i::Int)

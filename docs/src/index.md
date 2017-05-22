@@ -1,17 +1,19 @@
-# TipiFEM - Framework for the Finite Element Method
+# TipiFEM - A framework for implementation of finite element methods
 
-This is the documentation to TipiFEM, a framework for the implementation of Finite Element Methods in julia.
+This is the documentation to TipiFEM, a framework for the implementation of finite element methods in julia.
 The purpose of this documentation is to give the required mathematical background on which TipiFEM builds
 on, explain the software design of TipiFEM and how it may be used.
 
-Since there are many different choices to make when implementing a specific FEM the package
-is separated into different modules.
+TipiFEM is still in an early stage. Currently only the implementation of
+low order piecewise polynomial finite element Galerkin discretizations
+has been completed.
 
-The framework is seperated into different modules
+The framework is separated into different modules
 
-- Support for different element types
-  - 3-noded triangular elements
-  - 4-noded quadrilateral elements
+- `TipiFEM.FE`: Code for the implementation of finite element methods
+- `TipiFEM.Meshes`: Generic code for the implementation of Meshes
+- `TipiFEM.Quadrature`: Generic code for the approximate solution of integrals on mesh cells
+- `TipiFEM.PolytopalMesh`: (Incomplete) implementation of a mesh with polytopal cells.
 
 ## Mesh
 
@@ -42,12 +44,12 @@ structure then polytopes.
 
 *Features*
 
-- Support for different element types
-  - 3-noded triangular elements
-  - 4-noded quadrilateral elements
-- Generic mesh datastructure
+- Hybrid mesh with triangular and quadrilateral cells
+- Quadrature rules for triangular or quadrilateral cells with order up to 25 respectively 36
+- Generic degree of freedom mapper for continuous Lagrangian finite element methods
+- Generic finite element matrix and vector assemblers
 
-Now that we have defined what a mesh is we proceed with its implementation. A
+Now that we have defined what a mesh is we proceed with details of its implementation. A
 minimal representation of a polytopal-like mesh consists of a set of vertices
 ${\cal V}$, where each vertex has a unique identifier and coordinate $x \in \Omega$,
 and a set of cells ${\cal K}$, where each cell has again a unique identifier and
@@ -99,7 +101,7 @@ push!(mf, (1, 3, 4))
 push!(mf, (1, 3, 4))
 ```
 
-The value table $mf$ is then:
+The value table `mf` is then:
 
 | i                         | f(i)                                                                     |
 | ------------------------- | ------------------------------------------------------------------------ |

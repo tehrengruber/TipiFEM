@@ -13,17 +13,19 @@ import Base: getindex
 Subtypes of this type store all necessary information to map cells associated
 with a degree of freedom to unique integer indices.
 """
-abstract type AbstractDofHandler{K <: Cell} end
+abstract type AbstractDofHandler end
 
 """
 This DofHandler assigns integer ranges to each cell type. A unique integer
 index is then calculated from a cell index by adding the start value of the
 corresponding range and the cell index (in integer form).
 """
-@computed type DofHandler{K <: Cell, BT <: FEBasis} <: AbstractDofHandler{K}
-  msh::Mesh{K}
+@computed type DofHandler{K <: Cell, BT <: FEBasis, M <: Mesh} <: AbstractDofHandler
+  msh::M
   basis::BT
   offset::SVector{length(flatten(type_scatter(skeleton(K)))), Int}
+
+  # todo: check invariant K == cell_type(M)
 end
 
 function DofHandler{K <: Cell, BT <: FEBasis}(msh::Mesh{K}, basis::BT)
@@ -38,11 +40,11 @@ function DofHandler{K <: Cell, BT <: FEBasis}(msh::Mesh{K}, basis::BT)
     end
   end
   # construct
-  DofHandler{K, BT}(msh, basis, offsets)
+  DofHandler{K, BT, typeof(msh)}(msh, basis, offsets)
 end
 
 """
-Return the number of degrees of freedom
+Return the number of degrees of freedom / interpolation points
 """
 function number_of_dofs(dofh::DofHandler{K}) where K <: Cell
   mapreduce(+, flatten(type_scatter(skeleton(K)))) do C
@@ -54,23 +56,25 @@ end
 Returns an integer offset for a given cell type such that the offset plus a
 cell index in integer form, associated with a degree of freedom is unique.
 """
-function offset(dof_handler::DofHandler{K}, ::C) where {K <: Cell, C <: Cell}
+@generated function offset(dof_handler::DofHandler{K}, ::C) where {K <: Cell, C <: Cell}
   i = findfirst(flatten(type_scatter(skeleton(K))), C)
-  @boundscheck i != 0 || error("attempt get offset for a cell type which is not "
-                             * "contained in the skeleton of any codim zero cell")
-  dof_handler.offset[i]
+  i::Int # otherwise this method is not type stable...
+  i != 0 || error("attempt get offset for a cell type which is not "
+        * "contained in the skeleton of any codim zero cell")
+  :(dof_handler.offset[$(i)])
 end
 
 #"""
 #Given a cell associated with a degree of freedom returns a unique integer index
 #"""
-#function getindex(dofh::DofHandler, el_idx::Index{K}, ::LocalIndex{idx}) where {K <: Cell, idx}
+#function getindex(dofh::DofHandler, el_idx::Index{K}, ::LocalDOFIndex{idx}) where {K <: Cell, idx}
 #  C = associated_cell_type(K, dofh.basis, idx)
 #  offset(dofh, C)+convert(Int, connectivity(dofh.msh, K, C)[el_idx][idx])
 #end
 
 """
-Given a codim 0 zero returns unique integer indices for all local indices
+Given a codim 0 zero returns unique integer indices for all local
+interpolation points
 """
 @generated function getindex(dofh::DofHandler, el_idx::Index{K}) where K <: Cell
   expr = Expr(:block)
@@ -91,7 +95,7 @@ Given a codim 0 zero returns unique integer indices for all local indices
 
   quote
     n = number_of_local_shape_functions(dofh.basis, K())
-    result = MVector{n, Int}(1:n)
+    result = zeros(MVector{n, Int})
     pos=1
     $(expr)
     result
@@ -99,16 +103,16 @@ Given a codim 0 zero returns unique integer indices for all local indices
 end
 
 "cell type associated with a local dof index"
-associated_cell_type{K <: Cell}(dofh::DofHandler{K}, lidx::LocalIndex) = interpret_local_index(dofh, lidx)[1]
+associated_cell_type{K <: Cell}(dofh::DofHandler{K}, lidx::LocalDOFIndex) = interpret_local_index(dofh, lidx)[1]
 
 "integer in the range 0 to multiplicity(dofh.basis, associated_cell_type(K))-1"
-local_offset{K <: Cell}(dofh::DofHandler{K}, lidx::LocalIndex) = interpret_local_index(dofh, lidx)[2]
+local_offset{K <: Cell}(dofh::DofHandler{K}, lidx::LocalDOFIndex) = interpret_local_index(dofh, lidx)[2]
 
 """
 Given a codim zero cell type and a basis compute the cell type associated to
 the local index and its local offset
 """
-@Base.pure function interpret_local_index{K <: Cell, lidx}(dofh::DofHandler{K}, ::LocalIndex{lidx})
+@Base.pure function interpret_local_index{K <: Cell, lidx}(dofh::DofHandler{K}, ::LocalDOFIndex{lidx})
   lidx_stop = 0
   local_offset = 0
   # iterate over the skeleton of K in order of increasing dimension
@@ -120,5 +124,5 @@ the local index and its local offset
     end
     local_offset = lidx-lidx_stop
   end
-  error("attempt get associated cell type of an invalid LocalIndex")
+  error("attempt get associated cell type of an invalid LocalDOFIndex")
 end

@@ -39,11 +39,12 @@ end
 # helper function
 function is_dim_arg(arg)
   isa(arg, Symbol) && return false
+  if arg.head == :kw
+    arg = arg.args[1]
+  end
+  isa(arg, Symbol) && return false
   t = if arg.head == :(::)
     last(arg.args)
-  elseif arg.head == :kw
-    error("optional arguments not supported (yet).")
-    last(first(arg.args).args)
   else
     error("unexpected expression $(arg). please submit a bug report.")
   end
@@ -102,17 +103,22 @@ macro dim_dispatch(fn_def)
   perm_fun_sig_proto = copy(fn_sig)
   perm_fun_args_proto = []
   for (i, arg) in enumerate(perm_fun_sig_proto.args[2:end])
-    # if the argument is untyped
-    if typeof(arg) == Symbol
+    # if the argument has a default value we just omit the value
+    if isa(arg, Expr) && arg.head==:kw
+      arg = arg.args[1]
+    end
+    if typeof(arg) == Symbol # if the argument is untyped
       push!(perm_fun_args_proto, arg)
     elseif is_dim_arg(arg)
-      push!(perm_fun_args_proto, nothing) # these are ignored anyway later on
+      push!(perm_fun_args_proto, nothing) # these are ignored because they are handled later anyway
     elseif arg.head == :(::) && length(arg.args)==1
       name = gensym()
       arg.args=[name, arg.args[1]] # here we change perm_fun_sig_proto
       push!(perm_fun_args_proto, name)
     elseif arg.head == :(::)
       push!(perm_fun_args_proto, arg.args[1])
+    else
+      error("unexpected argument signature")
     end
   end
   # create all permutations

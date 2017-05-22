@@ -11,7 +11,7 @@ function show{K <: Cell}(io::IO, ::MIME"text/plain", mesh_topology::MeshTopology
     for i=0:mesh_dim
       print("$(i) |")
       for j=0:mesh_dim
-        write(io, " " * (hasindex(mesh_topology, Dim{i}(), Dim{j}()) ? "1 " : "0 "))
+        write(io, " " * (ispopulated(mesh_topology, Dim{i}(), Dim{j}()) ? "1 " : "0 "))
       end
       print("\n")
     end

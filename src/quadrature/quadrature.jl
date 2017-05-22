@@ -34,7 +34,7 @@ end
 """
 Appriximate integral of `f` over cell `geo` with order `order`
 """
-function integrate{G <: Geometry}(f::Function, geo::G; order=6)
+function integrate{G <: Geometry}(f::Function, geo::G; order=25)
   integrate_local(x̂ -> f(local_to_global(geo, x̂)), geo)
   #w, x_local, s = quadrule(Quadrule{cell_type(G), 3, real_type(G)})
   ##let Φ = (x)->local_to_global(geo,x), δvol = (x)->integration_element(geo,x)
@@ -50,7 +50,7 @@ end
 """
 Integrate a function `f̂` that lives on the reference triangle over `geo`
 """
-function integrate_local{G <: Geometry}(f̂::Function, geo::G; order=6)
+function integrate_local{G <: Geometry}(f̂::Function, geo::G; order=25)
   w, x_local, s = quadrule(Quadrule{cell_type(G), 12, real_type(G)})
   sum = zero(real_type(G))
   @fastmath @inbounds @simd for i in 1:length(w)

@@ -3,9 +3,7 @@ import Base.promote_rule
 using Base.bitcast
 using TipiFEM.Utils.@prototyping_only
 
-struct LocalIndex{idx} end
-
-@prototyping_only LocalIndex(idx::Int) = LocalIndex{idx}()
+@prototyping_only LocalDOFIndex(idx::Int) = LocalDOFIndex{idx}()
 
  # todo: currently an index is a subtype of an Integer to enable usage of
  #  Base.OneTo. Indices are however not purely Integers and should be therefore

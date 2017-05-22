@@ -1,12 +1,13 @@
 module Meshes
 
-export Mesh, add_vertex!, add_cell!, Index, LocalIndex, world_dim, mesh_dim, mesh, index,
+export Mesh, add_vertex!, add_cell!, Index, LocalDOFIndex, world_dim, mesh_dim, mesh, index,
        @import_mesh_interface, @export_mesh_interface, skeleton, connectivity,
        cells, Dim, Codim, MeshFunction, add_cell_initializer, vertex_type,
        Geometry, facet, dim, point, cell_type, real_type, geometry,
        populate_connectivity!, cell_types, complement, facet_count, face_count,
        number_of_cells, topology, reference_element, volume, jacobian_transposed,
-       jacobian_inverse_transposed, local_to_global, point, integration_element
+       jacobian_inverse_transposed, local_to_global, point, integration_element,
+       decompose, vertex_connectivity
 
 using StaticArrays
 using Iterators

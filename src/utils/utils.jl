@@ -72,7 +72,7 @@ end
 
 function extract_return_types(body; error=error)
   return_types = []
-  # find all return statements
+  # find <<all return statements
   postwalk(body) do sub_expr
     if isa(sub_expr, Expr) && sub_expr.head != :block &&
         @capture(sub_expr, return (return_type_(args__) | return_expr_::return_type_))
@@ -98,6 +98,18 @@ import Base.zeros
     push!(expr.args, 0)
   end
   expr
+end
+
+@Base.pure function tparam(T::Type, i::Int)
+  isa(T, UnionAll) || isa(T, DataType) || error("$(T) is neither a DataType nor a UnionAll")
+  # extract data type
+  while !isa(T, DataType)
+    T = T.body
+  end
+  # check that i is not a free type var
+  isa(T.parameters[i], TypeVar) && error("the i-th tparam of $(T) is not bound")
+  #
+  T.parameters[i]
 end
 
 """
@@ -212,6 +224,47 @@ macro generate_sisd(expr)
                    Expr(:call, Expr(:curly, f, sisd_Ts...), sisd_args...),
                    call_expr)
   esc(Expr(:block, :(Base.@__doc__ $(expr)), sisd_expr))
+end
+
+macro typeinfo(expr)
+  # rewrite expression in a canonical form
+  expr = canonicalize(expr)
+  # extract function name, signature, body from expression
+  is_fn_def = @capture(expr, function f_{targs__}(args__)
+                   body_
+                 end)
+  if !is_fn_def
+    targs=[]
+    is_fn_def = @capture(expr, function f_(args__)
+                                 body_
+                               end)
+  end
+  is_fn_def || error("expected function definition")
+  # generate function definition that dispatched on the value not on the type
+  ntargs=copy(targs)
+  nargs = map(args) do arg
+    if @capture(arg, x_::Type{T_Symbol})
+      :($(x)::$(T))
+    elseif @capture(arg, ::Type{T_Symbol})
+      :(::$(T))
+    elseif @capture(arg, x_::Type{<:T_})
+      new_targ = x
+      push!(ntargs, Expr(:<:, new_targ, T))
+      :(::$(new_targ))
+    elseif @capture(arg, x_::Type{T_})
+      error("argument $(arg) not supported by TipiFEM.Utils.@typeinfo")
+    else
+      arg
+    end
+  end
+  nexpr = :(function $(f){$(ntargs...)}($(nargs...))
+              $(body.args...)
+            end)
+  # make both expression a pure function
+  expr = :(Base.@__doc__ @Base.pure $(expr))
+  nexpr = :(Base.@__doc__ @Base.pure $(nexpr))
+  # return the two expressions
+  esc(Expr(:block, expr, nexpr))
 end
 
 end

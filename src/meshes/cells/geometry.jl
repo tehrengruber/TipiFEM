@@ -1,6 +1,7 @@
 import StaticArrays.Size
 import Base.getindex
 using Base: @propagate_inbounds, @_propagate_inbounds_meta
+using TipiFEM.Utils: tparam, @typeinfo
 
 @computed immutable Geometry{K <: Cell, world_dim, REAL_ <: Real} <: StaticMatrix{REAL_}
   data::NTuple{vertex_count(K)*world_dim, REAL_}
@@ -10,7 +11,7 @@ using Base: @propagate_inbounds, @_propagate_inbounds_meta
   end
 end
 
-@generated function (::Type{Geometry{K, world_dim, REAL_}})(xs::NTuple{N, SVector{world_dim, REAL_}}) where
+@generated function (::Type{Geometry{K, world_dim, REAL_}})(xs::NTuple{N, SVector{world_dim, <:Real}}) where
     {K <: Cell, world_dim, REAL_ <: Real, N}
   # generate an expression that converts all given nodes into a matrix
   xs_mat_expr = Expr(:call, :hcat)
@@ -28,13 +29,20 @@ end
   expr
 end
 
-@Base.pure cell_type{G <: Geometry}(::Type{G}) = G.parameters[1]
-@Base.pure world_dim{G <: Geometry}(::Type{G}) = G.parameters[2]
-@Base.pure real_type{G <: Geometry}(::Type{G}) = G.parameters[3]
+@generated function (::Type{Geometry{K, world_dim, REAL_}})(xs::NTuple{N, NTuple{world_dim, <:Real}}) where
+    {K <: Cell, world_dim, REAL_ <: Real, N}
+  # generate an expression that converts all given nodes into a matrix
+  expr = Expr(:call, :(Geometry{K, world_dim, REAL_}))
+  for i in 1:N
+    push!(expr.args, :(SVector{world_dim, REAL_}(xs[$(i)])))
+  end
+  expr
+end
 
-@Base.pure vertex_count{G <: Geometry}(::Type{G}) = vertex_count(cell_type(G))
-@Base.pure vertex_count{G <: Geometry}(::G) = vertex_count(cell_type(G))
-@Base.pure real_type{G <: Geometry}(::G) = G.parameters[3]
+@typeinfo cell_type{G <: Geometry}(::Type{G}) = tparam(G, 1)
+@typeinfo world_dim{G <: Geometry}(::Type{G}) = tparam(G, 2)
+@typeinfo real_type{G <: Geometry}(::Type{G}) = tparam(G, 3)
+@typeinfo vertex_count{G <: Geometry}(::Type{G}) = vertex_count(cell_type(G))
 
 @Base.pure function Size{K <: Cell, world_dim, REAL_ <: Real, _}(G::Type{Geometry{K, world_dim, REAL_, _}})
   Size(vertex_count(cell_type(G)),world_dim)

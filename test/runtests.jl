@@ -82,6 +82,58 @@ end
 @test Index"3-node triangle"(7)-1 == Index"3-node triangle"(6)
 
 ################################################################################
+# mesh function
+################################################################################
+info("Testing mesh function")
+@inferred MeshFunction(Polytope"1-node point", Int)
+info(" - HomogenousMeshFunction")
+let mf=MeshFunction(Polytope"1-node point", Int)
+  push!(mf, 1)
+  push!(mf, 2.)
+  @test length(mf) == 2
+  @test mf[1] == 1
+  @test mf[2] == 2
+  @test mf[first(domain(mf))] == 1
+  @test mf[last(domain(mf))] == 2
+  @inferred mf[1]
+  @inferred mf[first(domain(mf))]
+  @inferred first(domain(mf))
+  @inferred first(image(mf))
+  @inferred eltype(mf)
+  @inferred idxtype(mf)
+  empty!(mf)
+  @test length(mf) == 0
+end
+let indices = Index"3-node triangle"(1):Index"3-node triangle"(10),
+    values = 1:10
+  @inferred MeshFunction(indices, values)
+  mf = MeshFunction(indices, values)
+  @test length(mf) == 10
+end
+info(" - HetereogenousMeshFunction")
+let mf=MeshFunction(Union{Polytope"3-node triangle", Polytope"4-node quadrangle"}, Int)
+  push!(mf, Polytope"3-node triangle", 1)
+  push!(mf, Polytope"4-node quadrangle", 2.)
+  @test mf[Index"3-node triangle"(1)]==1
+  @test mf[Index"4-node quadrangle"(1)]==2
+  @test length(mf[Polytope"3-node triangle"]) == 1
+  @test length(mf[Polytope"4-node quadrangle"]) == 1
+  @test mf[Polytope"3-node triangle"][1] == 1
+  @test mf[Polytope"4-node quadrangle"][1] == 2
+  @test length(decompose(mf)) == 2
+  @test length(mf) == 2
+  @inferred mf[Polytope"3-node triangle"]
+  @inferred first(mf[Polytope"3-node triangle"])
+  map(decompose(mf)) do mf2
+    @inferred first(mf2)
+  end
+  mf[Polytope"3-node triangle"] = MeshFunction(Polytope"3-node triangle", Int)
+  @test length(mf) == 1
+  empty!(mf)
+  @test length(mf) == 0
+end
+
+################################################################################
 # cell connectivity
 ################################################################################
 #c1 = Connectivity"3-node triangle → 1-node point"(1, 2, 3)
@@ -92,10 +144,21 @@ let mesh = Mesh(Polytope"3-node triangle")
   add_vertex!(mesh, 0, 0)
   add_vertex!(mesh, 0, 1)
   add_vertex!(mesh, 1, 1)
+  @test coordinates(mesh)[Index"1-node point"(1)]==[0, 0]
+  @test coordinates(mesh)[Index"1-node point"(2)]==[0, 1]
+  @test coordinates(mesh)[Index"1-node point"(3)]==[1, 1]
   @test number_of_cells(mesh, Polytope"1-node point") == 3
 
+  # ensure that no cells with index zero may be added
+  @test_throws ErrorException add_cell!(mesh, Polytope"3-node triangle", 0, 2, 3)
+
   # connect vertices
-  add_cell!(mesh, Polytope"3-node triangle", 0, 1, 2)
+  add_cell!(mesh, Polytope"3-node triangle", 1, 2, 3)
+  @test length(geometry(mesh)) == 1
+  @test geometry(mesh)[Index"3-node triangle"(1)]==Geometry{Polytope"3-node triangle", 2, Float64}(
+    (0, 0),
+    (0, 1),
+    (1, 1))
   @test number_of_cells(mesh, Polytope"3-node triangle") == 1
 
   # populate connecitivity
@@ -126,6 +189,10 @@ let mesh = Mesh(Polytope"4-node quadrangle")
 
   @test number_of_cells(mesh, Polytope"2-node line") == 7
   # the mesh should contain 7 edges
+  @test length(topology(mesh)[Polytope"2-node line"]) == 7
+
+  # populate again and check that the number of edges is still 7
+  populate_connectivity!(mesh)
   @test length(topology(mesh)[Polytope"2-node line"]) == 7
 end
 #info(" - heterongenous mesh with triangular and quadrilateral elements")
@@ -169,6 +236,34 @@ let ref_tria = reference_element(Polytope"3-node triangle"),
   @test local_to_global(tria, point(ref_tria, 1)) == coord_t(0, 0)
   @test local_to_global(tria, point(ref_tria, 2)) == coord_t(2, 0)
   @test local_to_global(tria, point(ref_tria, 3)) == coord_t(0, 2)
+end
+
+#
+# type stability
+#
+info("Testing type stability")
+let mesh = Mesh(Polytope"4-node quadrangle")
+  # add some vertices
+  add_vertex!(mesh, 0, 0)
+  add_vertex!(mesh, 0, 1)
+  add_vertex!(mesh, 1, 1)
+  add_vertex!(mesh, 1, 0)
+  add_vertex!(mesh, 2, 0)
+  add_vertex!(mesh, 2, 1)
+
+  # connect vertices
+  add_cell!(mesh, Polytope"4-node quadrangle", 1, 2, 3, 4)
+  add_cell!(mesh, Polytope"4-node quadrangle", 2, 5, 6, 3)
+
+  # populate connecitvity
+  populate_connectivity!(mesh)
+
+  #
+  # test type stability
+  #
+  @inferred number_of_cells(mesh, Polytope"2-node line")
+  @inferred connectivity(mesh, Codim{0}(), Dim{0}())
+  @inferred connectivity(mesh, Codim{0}(), Codim{0}())
 end
 
 #

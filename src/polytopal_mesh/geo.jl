@@ -20,19 +20,81 @@ function reference_element(::Polytope"4-node quadrangle")
     SVector{2, Float64}(0, 1))
 end
 
+# todo: rewrite geometry and topology reduction by this simple rules
+#facets(::Polytope"3-node triangle") = (Edge, (1, 2), (2, 3), (3, 1))
+#
+#facets(::Polytope"4-node quadrangle") = (Edge, (1, 2), (2, 3), (3, 4), (4, 1))
+
 "Geometry of the facets of a triangle"
 function facets{G <: Geometry{Polytope"3-node triangle"}}(geo::G)
-  (Geometry{Polytope"2-node line", world_dim(G), real_type(G)}(point(geo, 1), point(geo, 2)),
-   Geometry{Polytope"2-node line", world_dim(G), real_type(G)}(point(geo, 2), point(geo, 3)),
-   Geometry{Polytope"2-node line", world_dim(G), real_type(G)}(point(geo, 3), point(geo, 1)))
+  (Geometry{Edge, world_dim(G), real_type(G)}(point(geo, 1), point(geo, 2)),
+   Geometry{Edge, world_dim(G), real_type(G)}(point(geo, 2), point(geo, 3)),
+   Geometry{Edge, world_dim(G), real_type(G)}(point(geo, 3), point(geo, 1)))
 end
 
 "Geometry of the facets of a quadrangle"
 function facets{G <: Geometry{Polytope"4-node quadrangle"}}(geo::G)
-  (Geometry{Polytope"2-node line", world_dim(G), real_type(G)}(point(geo, 1), point(geo, 2)),
-   Geometry{Polytope"2-node line", world_dim(G), real_type(G)}(point(geo, 2), point(geo, 3)),
-   Geometry{Polytope"2-node line", world_dim(G), real_type(G)}(point(geo, 3), point(geo, 4)),
-   Geometry{Polytope"2-node line", world_dim(G), real_type(G)}(point(geo, 4), point(geo, 1)))
+  (Geometry{Edge, world_dim(G), real_type(G)}(point(geo, 1), point(geo, 2)),
+   Geometry{Edge, world_dim(G), real_type(G)}(point(geo, 2), point(geo, 3)),
+   Geometry{Edge, world_dim(G), real_type(G)}(point(geo, 3), point(geo, 4)),
+   Geometry{Edge, world_dim(G), real_type(G)}(point(geo, 4), point(geo, 1)))
+end
+
+function find_longest_edge(geo::G) where G <: Geometry{Polytope"3-node triangle"}
+  edges = facets(ref_tria)
+  edge_lengths = map(volume, edges)
+  idx = indmax(edge_lengths)
+  egeo = edges[idx]
+  (idx, egeo)
+end
+
+function find_longest_edge(conn::C, geo::G) where {C <: Connectivity"3-node triangle → 1-node point", G <: Geometry{Polytope"3-node triangle"}}
+  idx, egeo = find_longest_edge(geo)
+  (idx, facets(conn)[idx], egeo)
+end
+
+# todo: local indices differ to refine(conn, geo)
+function refine{G <: Geometry{Polytope"3-node triangle"}}(geo::G)
+  const edge_t = Geometry{Polytope"2-node line", world_dim(G), real_type(G)}
+  edges = facets(ref_tria)
+  # find longest edge
+  longest_edge_index, longest_edge = find_longest_edge(geo)
+  # split lonest edge
+  longest_edge_midpoint = (point(longest_edge, 1)+point(longest_edge, 2))/2
+  split_edge_1 = edge_t(point(longest_edge, 1), mid_point_edge)
+  split_edge_2 = edge_t(mid_point_edge, point(longest_edge, 2))
+  # determine vertex opposite to the longest edge
+  opposite_vertex = point(geo, (3+longest_edge_index-1)%3)
+  # create two new edges
+  new_edge_1 = edge_t(opposite_vertex, mid_point_edge)
+  new_edge_2 = edge_t(mid_point_edge, opposite_vertex)
+  # refined triangles
+  triangle_1 = G(opposite_vertex,
+                 point(longest_edge, 1),
+                 longest_edge_midpoint)
+  triangle_2 = G(opposite_vertex,
+                 longest_edge_midpoint,
+                 point(longest_edge, 2)
+  (triangle_1, triangle_2)
+end
+
+function refine!(mesh::Mesh, id::Index{C}) where C <: Cell
+  mesh_conn = vertex_connectivity(mesh, C())
+  conn = mesh_conn[id]
+  geo = geometry(mesh, id)
+  # find longest edge
+  longest_edge_index, longest_edge, longe_edge_geo = find_longest_edge(conn, geo)
+  # add new midpoint of the longest edge to the mesh
+  push!(mesh.nodes, (point(longe_edge_geo, 1)+point(longe_edge_geo, 2))/2)
+  longest_edge_midpoint = last(domain(mesh.nodes))
+  # deduce vertex opposite to the longest edge
+  opposite_vertex = conn[(3+longest_edge_index-1)%3]
+
+  # construct connectivity of the refined triangles
+  triangle_1 = Connectivity{C, Vertex}(opposite_vertex, longest_edge[1], longest_edge_midpoint)
+  triangle_2 = Connectivity{C, Vertex}(opposite_vertex, longest_edge_midpoint, longest_edge[2])
+  mesh_conn[id] = triangle_1
+  add_cell!(mesh, triangle_2)
 end
 
 "Length of a line"
@@ -60,6 +122,8 @@ function integration_element{n}(geo::Geometry{Polytope"3-node triangle"},
     x::SMatrix{n, 2, <:Real})
   volume(geo)*2*ones(SVector{n, eltype(x)})
 end
+
+integration_element(geo::Geometry{Polytope"3-node triangle"}) = volume(geo)*2
 
 function integration_element(geo::Geometry{Polytope"3-node triangle"}, x::SVector{2,<:Real})
   volume(geo)*2
