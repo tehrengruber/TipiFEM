@@ -52,6 +52,10 @@ end
     end
 end
 
+function (::Type{Connectivity{T1, T2}}){T1 <: Cell, T2 <: Cell}()
+  Connectivity{T1, T2}((-1 for i in 1:incidentee_count(T1, T2))...)::fulltype(Connectivity{T1, T2})
+end
+
 incidenter_type{T1 <: Cell, T2 <: Cell}(::Type{Connectivity{T1, T2}}) = T1
 
 incidentee_type{T1 <: Cell, T2 <: Cell}(::Type{Connectivity{T1, T2}}) = T2

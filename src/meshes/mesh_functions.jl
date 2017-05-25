@@ -25,10 +25,12 @@ Construct an empty mesh function mapping cells of type K to values of type V
 MeshFunction(Polytope"3-node triangle", Int64)
 ```
 """
-function MeshFunction{K, V}(::Type{K}, ::Type{V})
+function MeshFunction(::Type{K}, ::Type{V}, ::Val{simple}) where {K <: Cell, V, simple}
   # call type trait to see which concrete type we need
-  find_appropriate_mesh_function(K, V)(K, V)
+  find_appropriate_mesh_function(K, V)(K, V, Val{simple}())
 end
+
+MeshFunction(::Type{K}, ::Type{V}) where {K <: Cell, V} = MeshFunction(K, V, Val{true}())
 
 find_appropriate_mesh_function(::DataType, ::Type) = HomogenousMeshFunction
 find_appropriate_mesh_function(::Union, ::Type) = HeterogenousMeshFunction
@@ -37,10 +39,17 @@ find_appropriate_mesh_function(::UnionAll, ::Type) = GenericMeshFunction
 """
 Construct a mesh function with domain `indices` and image `values`
 """
-function MeshFunction{II, VI}(indices::II, values::VI)
+function MeshFunction(indices::II, values::VI) where {II <: Union{AbstractArray, Range}, VI}
   length(size(values)) == 1 || error("MeshFunctions may only be initialized from 1-dimensional arrays")
-  MF = find_appropriate_mesh_function(cell_type(eltype(indices)), fulltype(eltype(values)))
-  MF(indices, values)
+  let K = cell_type(eltype(indices)), V = fulltype(eltype(values))
+    find_appropriate_mesh_function(K, V){K, V}(indices, values)
+  end
+end
+
+function MeshFunction{II, VI}(::Type{II}, ::Type{VI})
+  let K = cell_type(eltype(II)), V = fulltype(eltype(VI))
+    find_appropriate_mesh_function(K, V){K, V, II, VI}()
+  end
 end
 
 # todo: implement ∪
@@ -188,13 +197,21 @@ type HomogenousMeshFunction{K, V, II, VI} <: MeshFunction{K, V}
     @assert eltype(values) <: V "eltype(values) = $(eltype(values)) must be a subtype of the type parameter V"
     new{K, fulltype(V), II, VI}(indices, values)
   end
+
+  function (::Type{HomogenousMeshFunction{K, V, II, VI}}){K <: Cell, V, II, VI}()
+    # todo: check compatibility of K, V, II, VI
+    new{K, fulltype(V), II, VI}(II(), VI())
+  end
 end
 
-function HomogenousMeshFunction{K, V}(::Type{K}, ::Type{V})
-  indices = Base.OneTo{Index{K}}(0) # empty range (think 1:0)
+@generated HomogenousMeshFunction{K, V, simple}(::Type{K}, ::Type{V}, ::Val{simple}) = quote
+  assert(isa(simple, Bool))
+  indices = $(simple==true ? :(OneTo{Index{K}}(0)) : :(Vector{Index{K}}()))
   values = Array{fulltype(V), 1}()
   HomogenousMeshFunction{K, V}(indices, values)
 end
+
+HomogenousMeshFunction{K, V}(::Type{K}, ::Type{V}) = HomogenousMeshFunction(K, V, Val{true}())
 
 function HomogenousMeshFunction{II, VI}(indices::II, values::VI)
   @assert eltype(indices) <: Index "eltype(indices) = $(eltype(indices)) must be a subtype of $(Index)"
@@ -205,7 +222,8 @@ domain(mf::HomogenousMeshFunction) = mf.indices
 image(mf::HomogenousMeshFunction) = mf.values
 idxtype{HMF <: HomogenousMeshFunction}(mf::Type{HMF}) = eltype(fieldtype(HMF, :indices))
 eltype{HMF <: HomogenousMeshFunction}(mf::Type{HMF}) = eltype(fieldtype(HMF, :values))
-
+domain_type{HMF <: HomogenousMeshFunction}(::Type{HMF}) = fieldtype(HMF, :indices)
+image_type{HMF <: HomogenousMeshFunction}(::Type{HMF}) = fieldtype(HMF, :values)
 """
 Return integer index from cell index
 - If the domain is a range starting from 1 with step size 1 the cell index is
@@ -290,17 +308,23 @@ for (indices_t, expr) in [
       StepRange => :(StepRange(first(mf.indices), step(mf.indices), stop))
     ]
   @eval function push!(mf::HomogenousMeshFunction{K, V, II}, v::T) where {K, V, II <: $(indices_t), T}
-    stop = last(mf.indices)+1
+    stop = last(mf.indices)+step(mf.indices)
     mf.indices = $(expr) # allocate a new index
     push!(mf.values, v)
     mf
   end
 end
 
-function push!(mf::HomogenousMeshFunction, K::Type{<:Cell}, v::T) where T
+function push!(mf::HomogenousMeshFunction, ::Type{K}, v::T) where {K <: Cell, T}
   @assert cell_type(mf) == K "Can not add a value belonging to a cell of type "*
                              "$(K) into a mesh function with cell type $(cell_type(mf))"
   push!(mf, v)
+end
+
+function push!(mf::HomogenousMeshFunction{K, V, II}, i::Index{K}, v::T) where {K <: Cell, V, II <: AbstractArray, T}
+  push!(mf.indices, i)
+  push!(mf.values, v)
+  mf
 end
 
 """
@@ -451,15 +475,22 @@ type HeterogenousMeshFunction{K <: Cell, V, II <: Chain, VI <: Chain} <: MeshFun
     @assert eltype(values) <: V "eltype(values) = $(eltype(values)) must be a subtype of the type parameter V"
     new{K, fulltype(V), II, VI}(indices, values)
   end
+
+  function (::Type{HeterogenousMeshFunction{K, V, II, VI}}){K <: Cell, V, II, VI}()
+    # todo: check compatibility of K, V, II, VI
+    new{K, fulltype(V), II, VI}(II(), VI())
+  end
 end
 
-@generated function HeterogenousMeshFunction{K<:Cell, V}(::Type{K}, ::Type{V})
+@generated function HeterogenousMeshFunction{K<:Cell, V, simple}(::Type{K}, ::Type{V}, ::Val{simple})
   typeof(K) == Union || error("type $(K) is not Union type. Maybe you meant a HomogenousMeshFunction?")
   Ks = uniontypes(K)
   Vs = typeof(V) == Union ? uniontypes(V) : [V for i in 1:length(Ks)]
-  MFs = map((K, V) -> :(HomogenousMeshFunction($(K), $(V))), Ks, Vs)
+  MFs = map((K, V) -> :(HomogenousMeshFunction($(K), $(V), $(Val{simple}()))), Ks, Vs)
   :(chain($(MFs...)))
 end
+
+HeterogenousMeshFunction{K<:Cell, V}(::Type{K}, ::Type{V}) = HeterogenousMeshFunction(K, V, Val{true}())
 
 #function IsSortedByCellType(mf::GenericMeshFunction)
 #  mf = MeshFunction(cell_type(mf), eltype(mf))
@@ -468,8 +499,10 @@ end
 
 domain(mf::HeterogenousMeshFunction) = mf.indices
 image(mf::HeterogenousMeshFunction) = mf.values
-idxtype{HMF <: HeterogenousMeshFunction}(mf::Type{HMF}) = eltype(fieldtype(HMF, :indices))
-eltype{HMF <: HeterogenousMeshFunction}(mf::Type{HMF}) = eltype(fieldtype(HMF, :values))
+idxtype{HMF <: HeterogenousMeshFunction}(::Type{HMF}) = eltype(fieldtype(HMF, :indices))
+eltype{HMF <: HeterogenousMeshFunction}(::Type{HMF}) = eltype(fieldtype(HMF, :values))
+domain_type{HMF <: HeterogenousMeshFunction}(::Type{HMF}) = fieldtype(HMF, :indices)
+image_type{HMF <: HeterogenousMeshFunction}(::Type{HMF}) = fieldtype(HMF, :values)
 
 getindex(mf::HeterogenousMeshFunction, i::Index{K}) where K <: Cell = mf[K][i]
 getindex(mf::HeterogenousMeshFunction, i::Index{K}, j::Int) where K <: Cell = mf[K][i, j]
@@ -479,9 +512,12 @@ setindex!(mf::HeterogenousMeshFunction, v, i::Index{K}, j::Int) where K <: Cell 
 """
 Decompose `HeterogenousMeshFunction` into a set of `HomogenousMeshFunction`s
 """
-function decompose(mf::HeterogenousMeshFunction)
-  ((HomogenousMeshFunction(indices, values) for (indices, values)
-      in zip(mf.indices.xss, mf.values.xss))...)
+@generated function decompose(mf::HeterogenousMeshFunction)
+  expr = Expr(:tuple)
+  for i in 1:length(fieldtype(mf, :indices).parameters[1].parameters)
+    push!(expr.args, :(HomogenousMeshFunction(mf.indices.xss[$(i)], mf.values.xss[$(i)])))
+  end
+  expr
 end
 
 function empty!(mf::HeterogenousMeshFunction)
@@ -573,8 +609,20 @@ import Base.setindex!
 end
 
 getindex{T <: Cell}(mf::HeterogenousMeshFunction, idx::Index{T}) = mf[T][idx]
-function push!{T <: Cell}(mf::HeterogenousMeshFunction, ::Type{T}, xss...)
-  mf[T]=push!(mf[T], xss...)
+
+function push!(mf::HeterogenousMeshFunction, ::Union{Type{K}, K}, v::T) where {K <: Cell, T}
+  let mf_constrained = mf[K]
+    push!(mf_constrained, v)
+    mf[K] = mf_constrained
+  end
+  mf
+end
+
+function push!(mf::HeterogenousMeshFunction, i::Index{K}, v::T) where {K <: Cell, T}
+  let mf_constrained = mf[K]
+    push!(mf_constrained, i, v)
+    mf[K] = mf_constrained
+  end
   mf
 end
 

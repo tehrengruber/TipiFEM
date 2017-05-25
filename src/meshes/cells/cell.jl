@@ -24,8 +24,8 @@ abstract type Cell end
 end
 @Base.pure subcell{T <: Cell}(::Type{T}, d::Union{Int, Dim}) = subcell(T, Codim{dim(T)-convert(Int, d)}())
 @Base.pure subcell{T <: Cell}(::Type{T}) = subcell(T, Codim{1}())
-@Base.pure vertex_type{T <: Cell}(::Type{T}) = first(skeleton(T))
-@Base.pure vertex_count{T <: Cell}(::Type{T}) = face_count(T, vertex_type(T))
+@Base.pure vertex{T <: Cell}(::Type{T}) = first(skeleton(T))
+@Base.pure vertex_count{T <: Cell}(::Type{T}) = face_count(T, vertex(T))
 @Base.pure facet{UT <: Union{Cell, Union}}(::Type{UT}) = begin
   if typeof(UT) != Union
     error("no method matching facet(::Type{$(UT)}) did you forget to define it?")

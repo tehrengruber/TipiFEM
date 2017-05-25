@@ -5,7 +5,7 @@ import Base.Iterators.flatten
 using MacroTools
 using MacroTools: postwalk, prewalk
 
-export flatten, type_scatter, type_gather
+export flatten, type_scatter, type_gather, @sanitycheck
 
 struct MethodNotImplemented end
 
@@ -45,6 +45,12 @@ Todo: implement
 """
 macro prototyping_only(fn_def)
   esc(fn_def)
+end
+
+const enable_sanity_checks = true
+
+macro sanitycheck(expr)
+  enable_sanity_checks ? esc(expr) : :()
 end
 
 """

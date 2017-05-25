@@ -33,6 +33,13 @@ multiplicity{order}(::FEBasis{:Lagrangian, order}, ::Polytope"8-node hexahedron"
 multiplicity{order}(::FEBasis{:Lagrangian, order}, ::Polytope"6-node prism")::Int       = div((order-2)*(order-1)*(order-1), 2)
 multiplicity{order}(::FEBasis{:Lagrangian, order}, ::Polytope"5-node pyramid")::Int     = div((order-2)*(order-1)*(2*order-3), 6)
 
+for (i, node) in [(1, (0, 0)), (2, (0, 1)), (3, (1, 0))]
+  @eval @pure function interpolation_node(basis::FEBasis{:Lagrangian, 1}, ::K,
+      ::LocalDOFIndex{$(i)}; real_t=Float64) where K <: Cell
+    SVector{2, real_t}($(node))
+  end
+end
+
 # todo: add local shape functions on different domains then the reference triangle
 """
 Total number of local shape functions of the reference element `K`.

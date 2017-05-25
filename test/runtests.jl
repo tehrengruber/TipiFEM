@@ -81,6 +81,41 @@ end
 @test Index"3-node triangle"(7)+1 == Index"3-node triangle"(8)
 @test Index"3-node triangle"(7)-1 == Index"3-node triangle"(6)
 
+# ranges
+@inferred UnitRange(Index"3-node triangle"(2), Index"3-node triangle"(10))
+@inferred StepRange(Index"3-node triangle"(1), 2, Index"3-node triangle"(10))
+@inferred Base.OneTo(Index"3-node triangle"(10))
+let range = Index"3-node triangle"(2):Index"3-node triangle"(10)
+  @test first(range)==Index"3-node triangle"(2)
+  @test last(range)==Index"3-node triangle"(10)
+  @test typeof(start(range)) == typeof(next(range, start(range))[2])
+  @test length(range)==9
+  @inferred start(range)
+  @inferred next(range, start(range))
+  @inferred first(range)
+  @inferred last(range)
+end
+let range = Index"3-node triangle"(1):2:Index"3-node triangle"(10)
+  @test first(range)==Index"3-node triangle"(1)
+  @test last(range)==Index"3-node triangle"(9)
+  @test typeof(start(range)) == typeof(next(range, start(range))[2])
+  @test length(range)==5
+  @inferred start(range)
+  @inferred next(range, start(range))
+  @inferred first(range)
+  @inferred last(range)
+end
+let range = Base.OneTo(Index"3-node triangle"(10))
+  @test first(range)==Index"3-node triangle"(1)
+  @test last(range)==Index"3-node triangle"(10)
+  @test typeof(start(range)) == typeof(next(range, start(range))[2])
+  @test length(range)==10
+  @inferred start(range)
+  @inferred next(range, start(range))
+  @inferred first(range)
+  @inferred last(range)
+end
+
 ################################################################################
 # mesh function
 ################################################################################
@@ -144,9 +179,9 @@ let mesh = Mesh(Polytope"3-node triangle")
   add_vertex!(mesh, 0, 0)
   add_vertex!(mesh, 0, 1)
   add_vertex!(mesh, 1, 1)
-  @test coordinates(mesh)[Index"1-node point"(1)]==[0, 0]
-  @test coordinates(mesh)[Index"1-node point"(2)]==[0, 1]
-  @test coordinates(mesh)[Index"1-node point"(3)]==[1, 1]
+  @test nodal_coordinates(mesh)[Index"1-node point"(1)]==[0, 0]
+  @test nodal_coordinates(mesh)[Index"1-node point"(2)]==[0, 1]
+  @test nodal_coordinates(mesh)[Index"1-node point"(3)]==[1, 1]
   @test number_of_cells(mesh, Polytope"1-node point") == 3
 
   # ensure that no cells with index zero may be added
@@ -195,27 +230,29 @@ let mesh = Mesh(Polytope"4-node quadrangle")
   populate_connectivity!(mesh)
   @test length(topology(mesh)[Polytope"2-node line"]) == 7
 end
-#info(" - heterongenous mesh with triangular and quadrilateral elements")
-#let mesh = Mesh(Union{Polytope"3-node triangle", Polytope"4-node quadrangle"})
-#  # add some vertices
-#  add_vertex!(mesh, 0, 0)
-#  add_vertex!(mesh, 0, 1)
-#  add_vertex!(mesh, 1, 1)
-#  add_vertex!(mesh, 1, 0)
-#  add_vertex!(mesh, 3, 0.5)
-#  @test number_of_cells(mesh, Polytope"1-node point") == 5
-#
-#  # connect vertices
-#  add_cell!(mesh, Polytope"4-node quadrangle", 1, 2, 3, 4)
-#  add_cell!(mesh, Polytope"3-node triangle", 2, 5, 3)
-#  @test number_of_cells(mesh, Polytope"4-node quadrangle") == 1
-#  @test number_of_cells(mesh, Polytope"3-node triangle") == 1
-#
-#  # populate connecitvity
-#  populate_connectivity!(mesh)
-#
-#  @test number_of_cells(mesh, Polytope"2-node line") == 6
-#end
+info(" - heterongenous mesh with triangular and quadrilateral elements")
+let mesh = Mesh(Union{Polytope"3-node triangle", Polytope"4-node quadrangle"})
+  # add some vertices
+  add_vertex!(mesh, 0, 0)
+  add_vertex!(mesh, 0, 1)
+  add_vertex!(mesh, 1, 1)
+  add_vertex!(mesh, 1, 0)
+  add_vertex!(mesh, 3, 0.5)
+  @test number_of_cells(mesh, Polytope"1-node point") == 5
+
+  # connect vertices
+  add_cell!(mesh, Polytope"4-node quadrangle", 1, 2, 3, 4)
+  add_cell!(mesh, Polytope"3-node triangle", 2, 5, 3)
+  @test number_of_cells(mesh, Polytope"4-node quadrangle") == 1
+  @test number_of_cells(mesh, Polytope"3-node triangle") == 1
+
+  @test length(decompose(connectivity(mesh, Codim{0}(), Dim{0}()))) == 2
+
+  # populate connecitvity
+  populate_connectivity!(mesh)
+
+  @test number_of_cells(mesh, Polytope"2-node line") == 6
+end
 
 ################################################################################
 # cell geometry
@@ -304,7 +341,7 @@ module TestMesh
 
     @test cell_type(msh) == Edge
     @test cell_type(msh, 0) == Vertex
-    println(vertex_type(cell_type(msh)))
+    println(vertex(cell_type(msh)))
 
     add_vertex!(msh, 0)
     add_vertex!(msh, 1)
@@ -313,7 +350,7 @@ module TestMesh
     vtx = CellRef(msh, Index{Vertex}(2))
     cell = CellRef(msh, Index{Edge}(1))
 
-    @inferred coordinates(vtx)
+    @inferred nodal_coordinates(vtx)
 
     #@test_throws AssertionError coordinates(msh, Index{Edge}(2))
     @test coordinates(vtx) == coordinates(msh, Index{Vertex}(2)) == SVector{1, Float64}(1)

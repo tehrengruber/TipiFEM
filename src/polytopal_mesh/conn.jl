@@ -17,3 +17,9 @@ function facets(quad::Connectivity{Polytope"4-node quadrangle", Vertex})
    Connectivity{Edge, Vertex}(vertex(quad, 3), vertex(quad, 4)),
    Connectivity{Edge, Vertex}(vertex(quad, 4), vertex(quad, 1)))
 end
+
+# todo: genralize
+"Return canonical form of cell connectivity"
+function canonicalize_connectivity(e::C) where C <: Connectivity{Edge, Vertex}
+  e[1]<e[2] ? e : C(e[2], e[1])
+end

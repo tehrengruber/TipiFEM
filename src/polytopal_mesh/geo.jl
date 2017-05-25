@@ -41,7 +41,7 @@ function facets{G <: Geometry{Polytope"4-node quadrangle"}}(geo::G)
 end
 
 function find_longest_edge(geo::G) where G <: Geometry{Polytope"3-node triangle"}
-  edges = facets(ref_tria)
+  edges = facets(geo)
   edge_lengths = map(volume, edges)
   idx = indmax(edge_lengths)
   egeo = edges[idx]
@@ -61,20 +61,15 @@ function refine{G <: Geometry{Polytope"3-node triangle"}}(geo::G)
   longest_edge_index, longest_edge = find_longest_edge(geo)
   # split lonest edge
   longest_edge_midpoint = (point(longest_edge, 1)+point(longest_edge, 2))/2
-  split_edge_1 = edge_t(point(longest_edge, 1), mid_point_edge)
-  split_edge_2 = edge_t(mid_point_edge, point(longest_edge, 2))
   # determine vertex opposite to the longest edge
   opposite_vertex = point(geo, (3+longest_edge_index-1)%3)
-  # create two new edges
-  new_edge_1 = edge_t(opposite_vertex, mid_point_edge)
-  new_edge_2 = edge_t(mid_point_edge, opposite_vertex)
   # refined triangles
   triangle_1 = G(opposite_vertex,
                  point(longest_edge, 1),
                  longest_edge_midpoint)
   triangle_2 = G(opposite_vertex,
                  longest_edge_midpoint,
-                 point(longest_edge, 2)
+                 point(longest_edge, 2))
   (triangle_1, triangle_2)
 end
 

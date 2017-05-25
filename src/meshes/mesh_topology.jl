@@ -1,6 +1,7 @@
 using Base.return_types
 
-add_cell_initializer((K) -> topology_tuple_type(K, raw=true))
+add_cell_initializer((K) -> topology_tuple_type(K, true, raw=true))
+add_cell_initializer((K) -> topology_tuple_type(K, false, raw=true))
 
 const topology_tuple_type_cache = Dict{Type, DataType}()
 
@@ -35,14 +36,14 @@ end
   topology_matrix
 end
 
-@Base.pure function topology_tuple_type(K; raw=false)
+@Base.pure function topology_tuple_type(K, simple; raw=false)
   mesh_dim = dim(K)
   ts = []
   let topology_matrix = connectivity_types(K)
     for i in 0:mesh_dim
       for j in 0:mesh_dim
         T = first(return_types(MeshFunction, (Type{subcell(K, i)},
-                                     Type{topology_matrix[i+1, j+1]})))
+          Type{topology_matrix[i+1, j+1]}, Val{simple})))
         isa(T, DataType) ||
           error("Return type of MeshFunction constructor could not be inferred")
 
@@ -59,20 +60,20 @@ end
 """
 Two dimensional array like datastructure storing all mesh connectivities
 """
-@computed immutable MeshTopology{K}
-  data::topology_tuple_type(K)
+@computed immutable MeshTopology{K, simple}
+  data::topology_tuple_type(K, simple)
   populated::Array{Bool, 2}
 end
 
-function MeshTopology(::Type{K}) where K <: Cell
+function MeshTopology(::Type{K}, ::Val{simple}) where {K <: Cell, simple}
   data = MeshFunction[]
   for i in 0:dim(K)
     for j in 0:dim(K)
       push!(data, MeshFunction(subcell(K, Dim{i}()),
-                               connectivity_type(K, Dim{i}(), Dim{j}())))
+        connectivity_type(K, Dim{i}(), Dim{j}()), Val{simple}()))
     end
   end
-  MeshTopology{K}((data...), zeros(Bool, dim(K)+1, dim(K)+1))
+  MeshTopology{K, simple}((data...), zeros(Bool, dim(K)+1, dim(K)+1))
 end
 
 """
@@ -87,7 +88,7 @@ Clear mesh connecitvity i → j. Put differently remove all cell connectivity fr
 the mesh connectivity i → j.
 """
 @dim_dispatch function clear_connectivity!{K}(topology::MeshTopology{K}, i::Dim, j::Dim)
-  ispopulated(topology, i, j) && empty!(topology[i, j])
+  empty!(topology[i, j, true])
   topology.populated[convert(Int, i)+1, convert(Int, j)+1]=false
   nothing
 end

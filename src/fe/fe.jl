@@ -1,3 +1,5 @@
+using TipiFEM.Utils.@sanitycheck
+
 include("febasis.jl")
 include("dofhandler.jl")
 include("fespace.jl")
@@ -62,19 +64,21 @@ function matrix_assembler(a::Function, msh::Mesh, basis::FEBasis, dofh::Abstract
   sparse(I, J, V)
 end
 
+@pure function mesh_of_lowest_mesh_dimension(m1::Mesh{K1}, m2::Mesh{K2}) where {K1 <: Cell, K2 <: Cell}
+  dim(K1) < dim(K2) ? m1 : m2
+end
+
 function matrix_assembler(a::Function, trial_space::FESpace, test_space::FESpace)
-  @assert mesh(trial_space)==mesh(test_space) "mesh instance of the trial and test space must be equal"
   @assert dofh(trial_space)==dofh(test_space) "dofh of the trial and test space must be equal"
-  let mesh = mesh(trial_space),
+  let mesh = mesh_of_lowest_mesh_dimension(mesh(trial_space), mesh(test_space)),
       dofh = dofh(trial_space),
       basis_trial = basis(trial_space),
-      basis_test = basis(test_space)
-    # todo make sure the number of constraints in the trial space is equal to
-    #  the number of inactive cells in the test space
+      basis_test = basis(test_space),
+      mesh_geo = geometry(mesh(trial_space))
+
+    # todo: sanity checks on a
     # total number of local contributions
-    N = mapreduce(+, cell_types(mesh)) do K
-      number_of_cells(mesh, K())*number_of_local_shape_functions(basis, K())^2
-    end
+    N = min(number_of_active_dofs(trial_space), number_of_active_dofs(test_space))
     # row indices
     I = Array{Int, 1}(N)
     # column indices
@@ -85,21 +89,25 @@ function matrix_assembler(a::Function, trial_space::FESpace, test_space::FESpace
     k = 1
     # compute matrix elements for each cell type
     map(cell_types(mesh)) do K
+      @assert(number_of_local_shape_functions(basis_trial, K()) == number_of_local_shape_functions(basis_trial, K()),
+        "number of local shape functions in the trial space does not match with the test space")
       # number of local shape functions
       n = number_of_local_shape_functions(basis, K())
       # element matrix assembler
-      el_matrix = element_stiffness_matrix(a, K(), basis)
+      el_matrix = element_stiffness_matrix(a, K(), basis_trial, basis_test)
       # compute and distribute element matrix for each cell
-      for (cidx, geo) in graph(geometry(mesh(trial_space))[K]) # todo: remove [K]
+      for (cidx, geo) in graph(mesh_geo[K]) # todo: remove [K]
         # get global indices for the current element
         dofs = dofh[cidx]
         # compute and distribute element stiffness matrix
         for i in 1:n
           for j in 1:n
-            I[k] = dofs[j]
-            J[k] = dofs[i]
-            V[k] = el_matrix[i, j](geo)
-            k+=1
+            if is_dof_active(test_space, dofs[i]) && is_dof_active(trial_space, dofs[i])
+              I[k] = dofs[j]
+              J[k] = dofs[i]
+              V[k] = el_matrix[i, j](geo)
+              k+=1
+            end
           end
         end
       end
@@ -108,9 +116,9 @@ function matrix_assembler(a::Function, trial_space::FESpace, test_space::FESpace
     m = sparse(I, J, V)
     # remove rows of inactive cells in the test space
     #  since this is CSC this might be expensive
-    m[inactive_cells(test_space), :] = 0
+    #m[inactive_cells(test_space), :] = 0
     # remove coloums of inactive cells in the trial space
-    m[:, inactive_cells(trial_space)] = 0
+    #m[:, inactive_cells(trial_space)] = 0
   end
 end
 
@@ -119,7 +127,7 @@ function incorporate_constraints(fespace, galerkin_matrix, rhs_vector)
   for constraint in constraints(trial_space)
     for (id, v) in graph(constraint)
       # set diagonal entries of constrained dofs to 1
-      @assert m[id, :] == 0 "do not test where the solution is known"
+      @sanitycheck @assert m[id, :] == 0 "do not test where the solution is known"
       m[id, id] = 1
       # modify rhs vector
       rhs_vector[id] = v
@@ -129,7 +137,7 @@ end
 
 function vector_assembler(l::Function, msh::Mesh, basis::FEBasis, dofh::AbstractDofHandler)
   N = number_of_dofs(dofh)
-  V = Array{real_type(msh), 1}(N)
+  V = zeros(real_type(msh), N)
   k = 1
   map(cell_types(msh)) do K
     n = number_of_local_shape_functions(basis, K())
@@ -139,7 +147,7 @@ function vector_assembler(l::Function, msh::Mesh, basis::FEBasis, dofh::Abstract
       dofs = dofh[cidx]
       # distribute local/element load vector
       for i in 1:n
-          V[dofs[i]] = el_vec[i](geo)
+          V[dofs[i]] += el_vec[i](geo)
       end
     end
   end

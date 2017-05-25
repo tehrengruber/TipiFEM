@@ -54,10 +54,27 @@ end
 import Base.one
 one{IDX <: Index}(::Type{IDX}) = IDX(1)
 
+import Base.hash
+hash(i::Index) = hash(convert(Int, i))
+
 import Base.unitrange_last
 # todo: create julia pull request for this, but implement it in the constructor
 #  of a unitrange
 unitrange_last(start::Integer, stop::Integer) = unitrange_last(promote(start, stop)...)
+
+# fix start of OneTo ranges
+import Base: start, length, OneTo, step
+start(r::OneTo{Index{C}}) where C <: Cell = 1
+
+# fix length on ranges of indices (otherwise an Index is returned)
+import Base.length
+for T in (UnitRange, OneTo)
+  @eval length(r::$(T){Index{C}}) where C <: Cell = convert(Int, last(r)-first(r))+1
+end
+
+length(r::StepRange{Index{C}}) where C <: Cell = div(convert(Int, r.stop-r.start), step(r))+1
+
+step(r::StepRange{Index{C}}) where C <: Cell = convert(Int, r.step)
 
 # this is used for sorting
 import Base.sub_with_overflow
