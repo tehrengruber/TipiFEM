@@ -316,7 +316,10 @@ Mandatory information about
 
 ## DOF Handler
 
-The dof-handler maps dofs to unique integer indices. A simple dof handler
+The dof-handler maps an element index and a local degree of freedom index
+to a global degree of freedom index. For a continuous
+
+ to unique integer indices. A simple dof handler
 that works for a nodal basis may be implemented in two steps. The first step,
 an initialization procedure, has the be run only once. Here we assign each cell
 type a disjoint integer range as large as the number of cells of this type in the mesh.

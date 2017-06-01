@@ -7,22 +7,29 @@ using TipiFEM.Utils: canonicalize, @generate_sisd
 abstract type AbstractFEBasis end
 
 """
-Index of a local degree of freedom
+Local degree of freedom
 """
-struct LocalDOFIndex{idx} end
+struct LocalDOF{basis, K <: Cell, idx} end
+
+"""
+Local interpolation node
+"""
+struct InterpolationNode{basis, K <: Cell , idx} end
 
 """
 Singleton type specifing a basis of a finite element space.
 
-- `basis_type`: Symbol describing the type of basis (i.e. `:Lagrangian`)
-- `approx_order`: Polynomial degree up to which the shape functions
-- `dim`:
+- `basis_type`: Symbol describing the type of basis (e.g. `:Lagrangian`)
+- `approx_order`: Polynomial degree
 
 The actual properties of the basis are defined by functions dispatching
 on this type (i.e. multiplicity, local_shape_function).
 """
 struct FEBasis{basis_type, approx_order} <: AbstractFEBasis end
 
+################################################################################
+# multiplicity
+################################################################################
 "number of local shape functions belonging to the interior of a cell"
 multiplicity{order}(::FEBasis{:Lagrangian, order}, ::Polytope"1-node point")::Int       = 1
 multiplicity{order}(::FEBasis{:Lagrangian, order}, ::Polytope"2-node line")::Int        = (order-1)
@@ -33,34 +40,152 @@ multiplicity{order}(::FEBasis{:Lagrangian, order}, ::Polytope"8-node hexahedron"
 multiplicity{order}(::FEBasis{:Lagrangian, order}, ::Polytope"6-node prism")::Int       = div((order-2)*(order-1)*(order-1), 2)
 multiplicity{order}(::FEBasis{:Lagrangian, order}, ::Polytope"5-node pyramid")::Int     = div((order-2)*(order-1)*(2*order-3), 6)
 
-for (i, node) in [(1, (0, 0)), (2, (0, 1)), (3, (1, 0))]
-  @eval @pure function interpolation_node(basis::FEBasis{:Lagrangian, 1}, ::K,
-      ::LocalDOFIndex{$(i)}; real_t=Float64) where K <: Cell
-    SVector{2, real_t}($(node))
+################################################################################
+# local coordinates of the interpolation nodes
+################################################################################
+let all_coords = Dict(
+    # linear lagrangian finite elements on triangles
+    (Polytope"3-node triangle", 1) => ((0, 0), (1, 0), (0, 1)),
+    # second order lagrangian finite elements on triangles
+    (Polytope"3-node triangle", 2) => ((0, 0), (1, 0), (0, 1), (0.5, 0), (0.5, 0.5), (0, 0.5)),
+    # linear lagrangian finite elements on quadrilaterals
+    (Polytope"4-node quadrangle", 1) => ((0, 0), (1, 0), (1, 1), (0, 1)),
+    # second order lagrangian finite elements on quadrilaterals
+    (Polytope"4-node quadrangle", 2) => ((0, 0), (1, 0), (1, 1), (0, 1), (0.5, 0), (1, 0.5), (0.5, 1), (0, 0.5), (0.5, 0.5)))
+  # generate `coordinates` functions
+  for ((K, order), coords) in all_coords
+    for (i, coord) in enumerate(coords)
+      @eval @pure function coordinates(::InterpolationNode{FEBasis{:Lagrangian, $(order)}, $(K), $(i)},
+          ::Type{T}) where T <: Number
+        SVector{2, T}($(coord))
+      end
+    end
   end
 end
 
-# todo: add local shape functions on different domains then the reference triangle
+################################################################################
+# local cell indices of cells belonging to local interpolation nodes
+################################################################################
+let attached_cells = Dict(
+    # linear lagrangian finite elements on triangles
+    (Polytope"3-node triangle", 1) => ((Polytope"1-node point" for i in 1:3)...),
+    # second order lagrangian finite elements on triangles
+    (Polytope"3-node triangle", 2) => ((Polytope"1-node point" for i in 1:3)...,
+                                       (Polytope"2-node line" for i in 1:3)...),
+    # linear lagrangian finite elements on quadrilaterals
+    (Polytope"4-node quadrangle", 1) => ((Polytope"1-node point" for i in 1:4)...),
+    # second order lagrangian finite elements on quadrilaterals
+    (Polytope"4-node quadrangle", 2) => ((Polytope"1-node point" for i in 1:4)...,
+                                         (Polytope"2-node line" for i in 1:4)...,
+                                          Polytope"4-node quadrangle"))
+  for ((K, order), Cs) in attached_cells
+    for (i, C) in enumerate(Cs)
+      @eval attached_cell(::InterpolationNode{FEBasis{:Lagrangian, $(order)}, $(K), $(i)}) = $(C)
+      @eval attached_cell(::LocalDOF{FEBasis{:Lagrangian, $(order)}, $(K), $(i)}) = $(C)
+    end
+  end
+end
+
+################################################################################
+# degrees of freedom attached to an interpolation node on the boundary of a cell
+################################################################################
+let boundary_dofs = Dict(
+    # linear lagrangian finite elements on triangles
+    (Polytope"3-node triangle", 1) => (1, 2, 3),
+    # second order lagrangian finite elements on triangles
+    (Polytope"3-node triangle", 2) => (1, 2, 3, 4, 5, 6),
+    # linear lagrangian finite elements on quadrilaterals
+    (Polytope"4-node quadrangle", 1) => (1, 2, 3, 4),
+    # second order lagrangian finite elements on quadrilaterals
+    (Polytope"4-node quadrangle", 2) => (1, 2, 3, 4, 5, 6, 7, 8))
+  for ((K, order), dof_indices) in boundary_dofs
+    @eval function boundary_dofs(::FEBasis{:Lagrangian, $(order)}, ::$(K))
+      $(map(i->LocalDOF{FEBasis{:Lagrangian, order}, K, i}(), dof_indices))
+    end
+  end
+end
+
+################################################################################
+# degrees of freedom attached to an interpolation node on the interior of a cell
+################################################################################
+let internal_dofs = Dict(
+    # linear lagrangian finite elements on triangles
+    (Polytope"3-node triangle", 1) => (),
+    # second order lagrangian finite elements on triangles
+    (Polytope"3-node triangle", 2) => (),
+    # linear lagrangian finite elements on quadrilaterals
+    (Polytope"4-node quadrangle", 1) => (),
+    # second order lagrangian finite elements on quadrilaterals
+    (Polytope"4-node quadrangle", 2) => (9,))
+  for ((K, order), dof_indices) in internal_dofs
+    @eval function internal_dofs(::FEBasis{:Lagrangian, $(order)}, ::$(K))
+      $(map(i->LocalDOF{FEBasis{:Lagrangian, order}, K, i}(), dof_indices))
+    end
+  end
+end
+
+################################################################################
+# local index of the face to which a boundary dof is attached to
+################################################################################
+let local_face_indices = Dict(
+    # linear lagrangian finite elements on triangles
+    (Polytope"3-node triangle", 1) => (1, 2, 3), # (vertices...)
+    # second order lagrangian finite elements on triangles
+    (Polytope"3-node triangle", 2) => (1, 2, 3, 1, 2, 3), #(vertices..., edges...)
+    # linear lagrangian finite elements on quadrilaterals
+    (Polytope"4-node quadrangle", 1) => (1, 2, 3, 4), # (vertices...)
+    # second order lagrangian finite elements on quadrilaterals
+    (Polytope"4-node quadrangle", 2) => (1, 2, 3, 4, 1, 2, 3, 4)) # (vertices..., edges....)
+  for ((K, order), face_indices) in local_face_indices
+    for (i, face_index) in enumerate(face_indices)
+      @eval attached_face(::LocalDOF{FEBasis{:Lagrangian, $(order)}, $(K), $(i)}) = $(face_index)
+    end
+  end
+end
+
+"get the index of a local degree of freedom"
+index(::LocalDOF{B, K, idx}) where {B <: FEBasis, K <: Cell, idx} = idx
+
+"get the index of the local interpolation node"
+index(::InterpolationNode{B, K, idx}) where {B <: FEBasis, K <: Cell, idx} = idx
+
+# todo: generailize for multidimensional u's
+@pure function interpolation_node(::LocalDOF{FEBasis{:Lagrangian, order}, K, i}) where {order, K <: Cell, i}
+  InterpolationNode{FEBasis{:Lagrangian, order}, K, i}()
+end
+
+function number_of_interpolation_nodes(basis::FEBasis{:Lagrangian}, ::K) where K <: Cell
+  number_of_local_shape_functions(basis, K())
+end
+
+function interpolation_nodes(basis::FEBasis{:Lagrangian, order}, ::K) where {order, K <: Cell}
+  nodes = []
+  for i in 1:number_of_local_shape_functions(basis, K())
+    push!(nodes, InterpolationNode{FEBasis{:Lagrangian, order}, K, i}())
+  end
+  nodes
+end
+
 """
-Total number of local shape functions of the reference element `K`.
+Total number of local shape functions of `K`.
 """
 @pure function number_of_local_shape_functions(basis::FEBasis{:Lagrangian}, ::K) where K <: Cell
   mapreduce(C -> face_count(K, C) * multiplicity(basis, C()), +, skeleton(K))
 end
 
 """
-Retrieve i-th local shape function of the reference element of `K` in the given basis.
+Retrieve the local shape function attached to the local degree of freedom `i`.
 """
-@inline function local_shape_function{K <: Cell}(basis::FEBasis, ::K, i::LocalDOFIndex)
-  x -> local_shape_function(basis, K(), i, x)
+@inline function local_shape_function(i::LocalDOF)
+  x -> local_shape_function(i, x)
 end
 
 """
 Retrieve gradient of the i-th local shape function of the reference element
 of `K` in the given basis.
 """
-@inline function grad_local_shape_function{K <: Cell}(basis::FEBasis, ::K, i::LocalDOFIndex)
-  x -> grad_local_shape_function(basis, K(), i, x)
+@inline function grad_local_shape_function(i::LocalDOF)
+  x -> grad_local_shape_function(i, x)
 end
 
 """
@@ -68,7 +193,7 @@ Retrieve a vector containing the i-th local shape function of the reference elem
 of `K` in the given basis in the i-th position.
 """
 @pure function local_shape_functions(basis::FEBasis{:Lagrangian}, ::K) where K <: Cell
-  [local_shape_function(basis, K(), LocalDOFIndex{i}()) for i in 1:number_of_local_shape_functions(basis, K())]
+  [local_shape_function(LocalDOF{basis, K, i}()) for i in 1:number_of_local_shape_functions(basis, K())]
 end
 
 """
@@ -77,7 +202,7 @@ the reference element of `K` in the given basis in the i-th position.
 """
 @pure function grad_local_shape_functions(basis::FEBasis{:Lagrangian}, ::K) where K <: Cell
   # todo: use sizedarray
-  [grad_local_shape_function(basis, K(), LocalDOFIndex{i}()) for i in 1:number_of_local_shape_functions(basis, K())]
+  [grad_local_shape_function(LocalDOF{basis, K, i}()) for i in 1:number_of_local_shape_functions(basis, K())]
 end
 
 """
@@ -93,7 +218,7 @@ vector containing the values of the i-th shape function at `x̂s`.
   expr = Expr(:call, :(SVector{$(num_fns), SVector{num_points, T}}))
   for i in 1:num_fns
     push!(expr.args, quote
-      local_shape_function(basis, K(), LocalDOFIndex{$(i)}(), x̂s)
+      local_shape_function(LocalDOF{$(basis), $(K), $(i)}(), x̂s)
     end)
   end
   expr
@@ -120,7 +245,7 @@ concatinated.
   expr = Expr(:call, :(SVector{$(num_fns), SMatrix{num_points, local_dim, T}}))
   for i in 1:num_fns
     push!(expr.args, quote
-      grad_local_shape_function(basis, K(), LocalDOFIndex{$(i)}(), x̂s)
+      grad_local_shape_function(LocalDOF{$(basis), $(K), $(i)}(), x̂s)
     end)
   end
   expr
@@ -135,7 +260,7 @@ end
 
 #@vectorized_function begin
 #  SIMD => function local_shape_function{T, num_points}(
-#      ::FEBasis{:Lagrangian, 1}, ::Polytope"3-node triangle", ::LocalDOFIndex{$(i)},
+#      ::FEBasis{:Lagrangian, 1}, ::Polytope"3-node triangle", ::LocalDOF{$(i)},
 #       x̂::SMatrix{@VectorWidth(num_points), 2, T})
 #    $(lsf)
 #  end
@@ -157,12 +282,12 @@ let lsfs = [
   #  the corresponding function definitions
   for (i, (lsf, grad_lsf)) in enumerate(zip(lsfs, grad_lsfs))
     @eval @generate_sisd @Base.pure function local_shape_function{T, num_points}(
-        ::FEBasis{:Lagrangian, 1}, ::Polytope"3-node triangle", ::LocalDOFIndex{$(i)},
+        ::LocalDOF{FEBasis{:Lagrangian, 1}, Polytope"3-node triangle", $(i)},
         x̂::SMatrix{@VectorWidth(num_points), 2, T})::SVector{num_points, T}
       $(lsf)
     end
     @eval @generate_sisd @Base.pure function grad_local_shape_function{T, num_points}(
-        ::FEBasis{:Lagrangian, 1}, ::Polytope"3-node triangle", ::LocalDOFIndex{$(i)},
+        ::LocalDOF{FEBasis{:Lagrangian, 1}, Polytope"3-node triangle", $(i)},
          x̂::SMatrix{@VectorWidth(num_points), 2, T})::SMatrix{num_points, 2, T}
       # todo: use repeat iteration instead of copying
       hcat(ones(num_points)*$(grad_lsf[1]), ones(num_points)*$(grad_lsf[2]))
@@ -184,12 +309,12 @@ let lsfns = [
   #  the corresponding function definitions
   for (i, (fn, grad)) in enumerate(zip(lsfns, grad_lsfs))
     @eval @generate_sisd @Base.pure function local_shape_function{T, num_points}(
-        ::FEBasis{:Lagrangian, 1}, ::Polytope"4-node quadrangle", ::LocalDOFIndex{$(i)},
+        ::LocalDOF{FEBasis{:Lagrangian, 1}, Polytope"4-node quadrangle", $(i)},
         x̂::SMatrix{@VectorWidth(num_points), 2, T})::SVector{num_points, T}
       $(fn)
     end
     @eval @generate_sisd @Base.pure function grad_local_shape_function{T, num_points}(
-        ::FEBasis{:Lagrangian, 1}, ::Polytope"4-node quadrangle", ::LocalDOFIndex{$(i)},
+        ::LocalDOF{FEBasis{:Lagrangian, 1}, Polytope"4-node quadrangle", $(i)},
          x̂::SMatrix{@VectorWidth(num_points), 2, T})::SMatrix{num_points, 2, T}
       # todo: use repeat iteration instead of copying
       hcat($(grad[1]), $(grad[2]))
@@ -218,16 +343,16 @@ let lsfns = [
       (:(-λ_3(x̂)),       :(λ_1(x̂).-λ_3(x̂)))
     ]
   for (i, (fn, grad)) in enumerate(zip(lsfns, grad_lsfns))
-    @eval let λ_1 = local_shape_function(FEBasis{:Lagrangian, 1}(), Polytope"3-node triangle"(), LocalDOFIndex{1}()),
-              λ_2 = local_shape_function(FEBasis{:Lagrangian, 1}(), Polytope"3-node triangle"(), LocalDOFIndex{2}()),
-              λ_3 = local_shape_function(FEBasis{:Lagrangian, 1}(), Polytope"3-node triangle"(), LocalDOFIndex{3}())
+    @eval let λ_1 = local_shape_function(LocalDOF{FEBasis{:Lagrangian, 1}, Polytope"3-node triangle", 1}()),
+              λ_2 = local_shape_function(LocalDOF{FEBasis{:Lagrangian, 1}, Polytope"3-node triangle", 2}()),
+              λ_3 = local_shape_function(LocalDOF{FEBasis{:Lagrangian, 1}, Polytope"3-node triangle", 3}())
         @generate_sisd @inline @pure function local_shape_function{T, num_points}(
-            ::FEBasis{:Lagrangian, 2}, ::Polytope"3-node triangle", ::LocalDOFIndex{$(i)},
+            ::LocalDOF{FEBasis{:Lagrangian, 2}, Polytope"3-node triangle", $(i)},
              x̂::SMatrix{@VectorWidth(num_points), 2, T})::SVector{num_points, T}
           $(fn)
         end
         @generate_sisd @inline @pure function grad_local_shape_function{T, num_points}(
-            ::FEBasis{:Lagrangian, 2}, ::Polytope"3-node triangle", ::LocalDOFIndex{$(i)},
+            ::LocalDOF{FEBasis{:Lagrangian, 2}, Polytope"3-node triangle", $(i)},
              x̂::SMatrix{@VectorWidth(num_points), 2, T})::SMatrix{num_points, 2, T}
           hcat($(grad[1]), $(grad[2]))
         end

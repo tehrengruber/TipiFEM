@@ -18,6 +18,13 @@ function convert{K <: Cell}(::Type{Index{K}}, idx::Int)
   bitcast(Index{K}, idx)
 end
 
+function show(io::IO, id::Index)
+  show(io, typeof(id))
+  write(io, "(")
+  show(io, convert(Int, id))
+  write(io, ")")
+end
+
 @Base.pure cell_type{K <: Cell}(::Index{K}) = K
 @Base.pure cell_type{K <: Cell}(::Type{Index{K}}) = K
 

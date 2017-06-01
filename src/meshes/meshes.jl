@@ -7,7 +7,9 @@ export Mesh, add_vertex!, add_cell!, Index, LocalDOFIndex, world_dim, mesh_dim, 
        populate_connectivity!, cell_types, complement, facet_count, face_count,
        number_of_cells, topology, reference_element, volume, jacobian_transposed,
        jacobian_inverse_transposed, local_to_global, point, integration_element,
-       decompose, vertex_connectivity, elements, nodes, tagged_cells, nodal_coordinates
+       decompose, vertex_connectivity, elements, nodes, tagged_cells, nodal_coordinates,
+       IdIterator, issimple, parent_type, hasparent, world_dim, cell_type,
+       set_domain!, set_image!
 
 using StaticArrays
 using Iterators

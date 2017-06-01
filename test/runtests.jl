@@ -53,6 +53,13 @@ using TipiFEM.PolytopalMesh
 ################################################################################
 @test Polytope"3-node triangle"() == Polytope("3-node triangle")
 @test vertex_count(Polytope"3-node triangle") == 3
+@test skeleton(Polytope"3-node triangle") == (Polytope"1-node point",
+  Polytope"2-node line", Polytope"3-node triangle")
+@test skeleton(Polytope"4-node quadrangle") == (Polytope"1-node point",
+  Polytope"2-node line", Polytope"4-node quadrangle")
+# somewhen arround the end of mai this stopped working
+#@inferred skeleton(Polytope"3-node triangle")
+@inferred Polytope"4-node quadrangle"()
 #@test vertex_count(Polytope"6-node second order triangle") == 6
 
 ################################################################################

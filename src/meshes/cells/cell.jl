@@ -36,7 +36,7 @@ end
 @Base.pure face_count{C <: Cell}(::Type{C}, ::Type{C}) = 1
 @Base.pure facet_count{C <: Cell}(::Type{C}) = face_count(C, facet(C))
 @Base.pure function dim{UT <: Union{Cell, Union}}(::Type{UT})
-  @assert dim(UT.a)==dim(UT.b)
+  assert(dim(UT.a)==dim(UT.b))
   dim(UT.a)
 end
 @Base.pure dim_t{T<:Cell}(::Type{T}) = Dim{dim(T)}()
@@ -59,3 +59,5 @@ end
 include("index.jl")
 include("connectivity.jl")
 include("geometry.jl")
+
+const IdIterator{K} = Union{AbstractVector{Index{K}}, Range{Index{K}}}

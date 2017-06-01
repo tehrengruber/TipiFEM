@@ -64,13 +64,10 @@ function matrix_assembler(a::Function, msh::Mesh, basis::FEBasis, dofh::Abstract
   sparse(I, J, V)
 end
 
-@pure function mesh_of_lowest_mesh_dimension(m1::Mesh{K1}, m2::Mesh{K2}) where {K1 <: Cell, K2 <: Cell}
-  dim(K1) < dim(K2) ? m1 : m2
-end
-
-function matrix_assembler(a::Function, trial_space::FESpace, test_space::FESpace)
+function matrix_assembler(el_matrix::Function, trial_space::FESpace, test_space::FESpace)
   @assert dofh(trial_space)==dofh(test_space) "dofh of the trial and test space must be equal"
-  let mesh = mesh_of_lowest_mesh_dimension(mesh(trial_space), mesh(test_space)),
+  # choose the mesh with the lowest number of elements
+  let mesh = number_of_elements(mesh(trial_space)) > number_of_elements(mesh(test_space)),
       dofh = dofh(trial_space),
       basis_trial = basis(trial_space),
       basis_test = basis(test_space),
@@ -89,23 +86,22 @@ function matrix_assembler(a::Function, trial_space::FESpace, test_space::FESpace
     k = 1
     # compute matrix elements for each cell type
     map(cell_types(mesh)) do K
-      @assert(number_of_local_shape_functions(basis_trial, K()) == number_of_local_shape_functions(basis_trial, K()),
-        "number of local shape functions in the trial space does not match with the test space")
-      # number of local shape functions
-      n = number_of_local_shape_functions(basis, K())
-      # element matrix assembler
-      el_matrix = element_stiffness_matrix(a, K(), basis_trial, basis_test)
       # compute and distribute element matrix for each cell
       for (cidx, geo) in graph(mesh_geo[K]) # todo: remove [K]
         # get global indices for the current element
         dofs = dofh[cidx]
+        # get active degrees of freedom
+        isactive = active_dofs(trial_space, cidx)
+        @sanitycheck assert(active_dofs(trial_space, cidx) == active_dofs(test_space, cidx))
+        # asseble element matrix
+        el_mat = el_matrix(cidx, geo, dofs)
         # compute and distribute element stiffness matrix
-        for i in 1:n
-          for j in 1:n
-            if is_dof_active(test_space, dofs[i]) && is_dof_active(trial_space, dofs[i])
+        for i in 1:size(el_mat, 1)
+          for j in 1:size(el_mat, 2)
+            if is_dof_active(trial_space, dofs[i]) && is_dof_active(trial_space, dofs[j])
               I[k] = dofs[j]
               J[k] = dofs[i]
-              V[k] = el_matrix[i, j](geo)
+              V[k] = el_mat[i, j]
               k+=1
             end
           end
@@ -159,8 +155,7 @@ end
 #  expr::Expr
 #  attributes::Dict{Symbol, Any}
 #end
-
-#@functional a(u, v) = integrate(α(x) u(x̂)v(x̂), {x ∈ K})
+#@functional a(u, v) = integrate(α(x) grad(u)(x̂)v(x̂), {x ∈ K})
 
 #{1 < x < 2}
 
@@ -171,7 +166,8 @@ end
 
 #a(b̂[i], b̂[j])
 
-#a(u, v) = geo -> integrate_local(x̂->u(x̂)v(x̂), geo)
+a(u, v) = geo -> integrate_local(x̂->u(x̂)v(x̂), geo)
+
 ##
 #@functional a(u, v) = ∫ α(x) * u(̂x)v(̂x) dΩ_1
 #@functional a(u, v) = ∫ α(x) * u(̂x)v(̂x) d∂Ω

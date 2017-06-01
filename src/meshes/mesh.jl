@@ -15,24 +15,39 @@ Mesh(Polygon"3-node triangle")
 Mesh(Union{Polygon"3-node triangle", Polygon"4-node quadrangle"})
 ```
 """
-@computed immutable Mesh{K, world_dim, REAL_ <: Real, simple}
+@computed immutable Mesh{K, world_dim, REAL_ <: Real, simple, PM}
   nodes::HomogenousMeshFunction{vertex(K), SVector{world_dim, REAL_},
     simple ? OneTo{Index{vertex(K)}} : Vector{Index{vertex(K)}}, Vector{SVector{world_dim, REAL_}}}
   topology::fulltype(MeshTopology{K, simple})
   attributes::Dict{Any, MeshFunction}
-  cell_groups::Dict{Any, Array{Index, 1}}
+  cell_groups::Dict{Any, Vector{Index}}
+  parent::PM
 
-  function Mesh()
-    mesh = new{K, world_dim, REAL_, simple}(
+  function Mesh(parent::PM=nothing)
+    mesh = new{K, world_dim, REAL_, simple, PM}(
       MeshFunction(vertex(K), SVector{world_dim, REAL_}, Val{simple}()),
-      MeshTopology(K, Val{simple}()), Dict{Symbol, MeshFunction}(), Dict{Any, Array{Cell, 1}}())
+      MeshTopology(K, Val{simple}()), Dict{Symbol, MeshFunction}(), Dict{Any, Array{Cell, 1}}(),
+      parent)
     mark_populated!(mesh.topology, dim_t(K), Dim{0}())
     #attributes(msh)[:proper] = true
     mesh
   end
 end
 
-Mesh{K <: Cell}(::Type{K}; simple=Val{true}) = Mesh{K, dim(K), Float64, simple==Val{true}}()
+Mesh{K <: Cell}(::Type{K}; simple=Val{true}) = Mesh{K, dim(K), Float64, simple==Val{true}, Void}()
+
+"is the mesh simple"
+@typeinfo issimple(M::Type{<:Mesh}) =  tparam(M, 4)
+
+"get type of the parent mesh"
+@typeinfo parent_type(M::Type{<:Mesh}) = tparam(M, 5)
+
+"does the mesh has a parent"
+@typeinfo hasparent(M::Type{<:Mesh}) = parent_type(M) != Void
+
+import Base.parent
+
+parent(mesh::Mesh) = mesh.parent
 
 "dimension of the ambient space"
 @typeinfo world_dim(M::Type{<:Mesh}) = tparam(M, 2)
@@ -76,6 +91,25 @@ function number_of_cells(msh::Mesh, ::Union{T, Type{T}}) where T <: Cell
   end
 end
 
+function dumpmesh(msh::Mesh{K}) where K <: Cell
+  # show the usual mesh information
+  display(msh)
+  # show all nodes
+  println("  Nodes: ")
+  for (nid, coordinates) in graph(nodes(msh))
+    println("    $(nid) ↦ $(coordinates)")
+  end
+  println()
+  # show all cells
+  for d in dim(K):-1:1
+    println("  $(d) dimensional cells:")
+    for (cid, cell_conn) in graph(connectivity(msh, Dim{d}(), Dim{0}()))
+      println("   $(cid) ↦ $(cell_conn)")
+    end
+    println()
+  end
+end
+
 "dimension of codimension zero cells"
 @typeinfo mesh_dim(M::Type{<:Mesh}) = dim(cell_type(M))
 
@@ -98,9 +132,9 @@ this represents the incedence relation of i-cells with j-cells
   topology(mesh)[d1, d2]
 end
 
-function connectivity{C1 <: Cell, C2 <: Cell}(mesh, ::C1, ::C2)
+@dim_dispatch function connectivity{K <: Cell, C <: Cell}(mesh::Mesh{K}, ::C, j::Dim)
   #assert(subcell(C1, dim_t(C2)) == C2)
-  connectivity(mesh, dim_t(C1), dim_t(C2))[C1]
+  connectivity(mesh, dim_t(C), j)[C]
 end
 
 function vertex_connectivity(mesh::Mesh, ::C) where C <: Cell
@@ -138,14 +172,20 @@ function add_cell!{K <: Cell}(mesh::Mesh, conn::Connectivity{K})
   @assert(K ∈ flatten(type_scatter(skeleton(cell_type(mesh)))),
           """Can not add a cell of type $(K) into a mesh with element type $(cell_type(msh))
           admissable cell types: $(flatten(type_scatter(skeleton(cell_type(msh)))))""")
-  @inbounds push!(cells(mesh, dim_t(K)), K, conn)
+  @inbounds push!(connectivity(mesh, dim_t(K), Dim{0}()), K, conn)
 end
 
 function add_cell!(mesh::Mesh, i::Index{K}, conn::Connectivity{K}) where {K <: Cell}
   push!(cells(mesh, dim_t(K)), i, conn)
 end
 
-cells(mesh::Mesh, ::Dim{d}) where {d} = connectivity(mesh, Dim{d}(), Dim{0}())
+function cells(mesh::Mesh, ::K) where K <: Cell
+  dim(K) == 0 ? domain(nodes(mesh)) : domain(connectivity(mesh, dim_t(K), Dim{0}())[K])
+end
+
+function cells(mesh::Mesh, i::Dim)
+  i == Dim{0}() ? domain(nodes(mesh)) : domain(connectivity(mesh, i, Dim{0}()))
+end
 
 import Base.eltype
 
@@ -158,18 +198,28 @@ nodal_coordinates(mesh::Mesh) = image(mesh.nodes)
 "Return the nodes of a mesh `mesh`"
 nodes(mesh::Mesh) = mesh.nodes
 
-const IdIterator{K} = Union{AbstractVector{Index{K}}, Range{Index{K}}}
-
-vertices(mesh::Mesh, cells::IdIterator{K}) where K <: Cell = domain(connectivity(mesh, K))[vertices(mesh)]
+function vertices(mesh::Mesh, cells::IdIterator{K}) where K <: Cell
+  domain(connectivity(mesh, K))[vertices(mesh)]
+end
 
 # look wether https://github.com/JuliaArrays/MappedArrays.jl
 #  is an alternative
-function geometry(mesh::Mesh)
-  mapreduce(chain, decompose(connectivity(mesh, Codim{0}(), Dim{0}()))) do mesh_conn
-    geo_t = Geometry{cell_type(mesh_conn), world_dim(mesh), real_type(mesh)}
+geometry(mesh::Mesh) = geometry(mesh, Codim{0}())
+
+@dim_dispatch function geometry{K <: Cell}(mesh::Mesh{K}, i::Dim)
+  mapreduce(chain, decompose(connectivity(mesh, i, Dim{0}()))) do mesh_conn
+    const geo_t = Geometry{cell_type(mesh_conn), world_dim(mesh), real_type(mesh)}
     map(graph(mesh_conn)) do idx, conn
       geo_t(map(vidx -> nodes(mesh)[vidx], conn))
     end
+  end
+end
+
+function geometry(mesh::Mesh, ::Union{C, Type{C}}) where {C <: Cell}
+  mesh_conn = connectivity(mesh, C(), Dim{0}())
+  const geo_t = Geometry{cell_type(mesh_conn), world_dim(mesh), real_type(mesh)}
+  map(graph(mesh_conn)) do idx, conn
+    geo_t(map(vidx -> nodes(mesh)[vidx], conn))
   end
 end
 
@@ -213,15 +263,15 @@ tagged_cells(mesh::Mesh, tag) = cell_groups(mesh)[tag]
 Given a predicate `pred` taking a cell geometry tag all cells for which
 `pred` return true
 """
-function tag_cells(pred::Function, mesh::Mesh, tag)
-  cell_group = mapreduce(chain, decompose(geometry(mesh))) do mesh_geo
-    homogenous_cell_group = Array{idxtype(mesh_geo), 1}()
+function tag_cells!(pred::Function, mesh::Mesh, ::Union{C, Type{C}}, tag) where C <: Cell
+  cell_group = Vector{Index}()
+  foreach(decompose(geometry(mesh, C))) do mesh_geo
     map(graph(mesh_geo)) do idx, geo
       if pred(geo)
-        push!(homogenous_cell_group, idx)
+        push!(cell_group, idx)
       end
     end
-    homogenous_cell_group
+    cell_group
   end
   cell_groups(mesh)[tag] = cell_group
 end
@@ -242,22 +292,21 @@ function tag_nodes(pred::Function, mesh::Mesh, node_ids::Array{Index}, tag)
   cell_groups(mesh)[tag] = tagged_nodes
 end
 
-function surface_mesh(mesh::Mesh{K, world_dim, REAL_}) where {K<:Cell, world_dim, REAL_ <: Real}
+function boundary(mesh::Mesh{K, world_dim, REAL_}) where {K<:Cell, world_dim, REAL_ <: Real}
   # construct a new mesh
-  surface_mesh = Mesh{facet(K), world_dim, REAL_, false}()
+  boundary_mesh = Mesh{facet(K), world_dim, REAL_, false, typeof(mesh)}(mesh)
   # get all boundary cells
   boundary_cells = tagged_cells(mesh, :boundary)
   # get the connectivity of all Codim{1} cells
   el_mesh_conn = connectivity(mesh, Codim{1}(), Dim{0}())
   # the number of vertices of all cells on the boundary
   N = vertex_count(facet(K))*length(boundary_cells)
-  println(N)
   # the ids of all vertices
   vertices = Vector{Index{vertex(K)}}(N)
   k=1
   for cid in boundary_cells
     el_conn = el_mesh_conn[cid]
-    add_cell!(surface_mesh, cid, el_conn)
+    add_cell!(boundary_mesh, cid, el_conn)
     for v in el_conn
       vertices[k] = v
       k+=1
@@ -267,50 +316,102 @@ function surface_mesh(mesh::Mesh{K, world_dim, REAL_}) where {K<:Cell, world_dim
   let nodes = nodes(mesh)
     vertex_ids = unique(vertices)
     for vid in vertex_ids
-      add_vertex!(surface_mesh, vid, nodes[vid])
+      add_vertex!(boundary_mesh, vid, nodes[vid])
     end
   end
   # return mesh
-  surface_mesh
+  boundary_mesh
 end
 
-function populate_connectivity!(msh::Mesh{K}) where K <: Cell
-  const facet_conn_t = Connectivity{facet(K), subcell(K, Dim{0}())}
+function populate_connectivity!(msh::Mesh{Ks}) where Ks <: Cell
+  const facet_conn_t = Connectivity{facet(Ks), subcell(Ks, Dim{0}())}
   # clear connectivity (in case the connectivity is already populated)
   clear_connectivity!(topology(msh), Codim{0}(), Codim{1}())
   clear_connectivity!(topology(msh), Codim{0}(), Codim{0}())
   clear_connectivity!(topology(msh), Codim{1}(), Dim{0}())
   # get facet mesh connectivity (incidence relation codim 1 -> dim 0)
   facets_mesh_conn = topology(msh)[Codim{1}(), Dim{0}(), true]
-  # number of half facets
-  N = mapreduce(K -> facet_count(K)*number_of_cells(msh, K),
-    +, cell_types(msh))
-  # allocate vector containing the connectivity of all facets
-  cannonical_half_facets_conn = Vector{fulltype(facet_conn_t)}() # todo: preallocate
-  # ...
+  # get element facet mesh connectivity (incidence relation codim 0 -> dim 1)
+  el_facet_mesh_conn = topology(msh)[Codim{0}(), Codim{1}(), true]
+  # add edges in the interior to the mesh
+  potential_boundary_facet_tuples = Vector{Tuple{Index, Int, fulltype(facet_conn_t)}}()
+  mesh_conn = connectivity(msh, Codim{0}(), Dim{0}())
+  # todo: this gives a 5x performance degradation -> move to a seperate function
+  #  this might be caused by julia #15276
   foreach(decompose(connectivity(msh, Codim{0}(), Dim{0}()))) do mesh_conn
-    for cell_conn in mesh_conn
-      for facet_conn in facets(cell_conn)
-        push!(cannonical_half_facets_conn, canonicalize_connectivity(facet_conn))
+    K = cell_type(mesh_conn)
+    resize!(el_facet_mesh_conn[K], number_of_cells(msh, K))
+    # allocate a vector containing the facet tuples
+    facet_tuples = Vector{Tuple{Index{K}, Int, fulltype(facet_conn_t)}}()
+    # first add all half facets
+    for (cid, cell_conn) in graph(mesh_conn)
+      for (local_index, facet_conn) in enumerate(facets(cell_conn))
+        push!(facet_tuples, (cid, local_index, canonicalize_connectivity(facet_conn)))
       end
     end
-  end
-  facet_conns = Vector{facet_conn_t}()
-  # sort
-  sort!(cannonical_half_facets_conn)
-  boundary_facet_ids = Array{Index{facet(K)}, 1}()
-  last_facet_conn = facet_conn_t()
-  for facet_conn in cannonical_half_facets_conn
-    if facet_conn == last_facet_conn
-      pop!(boundary_facet_ids) # last facet was not a boundary facet
-    else
-      push!(facets_mesh_conn, facet_conn)
-      push!(boundary_facet_ids, domain(facets_mesh_conn)[end])
+    # sort the facet tuples by the the facet connectivity
+    sort!(facet_tuples, by=ft->ft[3])
+    # here we store the indices in the facet tuples array of all facet tuples
+    #  that potentially lie on the boundary
+    potential_boundary_facet_tuple_indices = Vector{Int}()
+    # now iterate over all facet tuples
+    let last_pid = Index{K}(0), # parent cell id in the last iteration
+        last_facet_conn = facet_conn_t(), # facet connectivity in the last iteration
+        i=1 # current index
+      for (pid, local_index, facet_conn) in facet_tuples
+        if last_facet_conn == facet_conn
+          pop!(potential_boundary_facet_tuple_indices)
+          push!(facets_mesh_conn, facet_conn)
+          facet_id = last(domain(facets_mesh_conn))
+          el_facet_mesh_conn[pid, local_index] = facet_id
+        else
+          push!(potential_boundary_facet_tuple_indices, i)
+        end
+        # update current index and store the pid and facet_conn of the current
+        #  iteration
+        i+=1
+        last_pid=pid
+        last_facet_conn=facet_conn
+      end
     end
-    last_facet_conn = facet_conn
+    # now add all potential boundary facet tuples
+    for i in potential_boundary_facet_tuple_indices
+      push!(potential_boundary_facet_tuples, facet_tuples[i])
+    end
+  end
+  boundary_facet_ids = Vector{Index{facet(Ks)}}()
+  boundary_facet_tuples = Vector{Tuple{Index, Int, fulltype(facet_conn_t)}}()
+  # sort the potential boundary facet tuples by the the facet connectivity
+  sort!(potential_boundary_facet_tuples, by=ft->ft[3])
+  # now iterate over all potential boundary facet tuples and remove duplicates
+  last_pid = nothing # parent cell id in the last iteration
+  last_local_index = 0
+  last_facet_conn = facet_conn_t() # facet connectivity in the last iteration
+  for (pid, local_index, facet_conn) in potential_boundary_facet_tuples
+    if last_facet_conn == facet_conn
+      # add it to the mesh
+      push!(facets_mesh_conn, facet_conn)
+      facet_id = last(domain(facets_mesh_conn))
+      el_facet_mesh_conn[pid, local_index] = facet_id
+      el_facet_mesh_conn[last_pid, last_local_index] = facet_id
+      # remove it from the boundary facet tuples
+      pop!(boundary_facet_tuples)
+    else
+      push!(boundary_facet_tuples, (pid, local_index, facet_conn))
+    end
+    last_pid=pid
+    last_local_index=local_index
+    last_facet_conn=facet_conn
+  end
+  # now that we have found all boundary facet tuples add them to the mesh
+  for (pid, local_index, facet_conn) in boundary_facet_tuples
+    push!(facets_mesh_conn, facet_conn)
+    facet_id = last(domain(facets_mesh_conn))
+    el_facet_mesh_conn[pid, local_index] = facet_id
+    push!(boundary_facet_ids, facet_id)
   end
   # sanity check
-  @assert(mapreduce(K -> facet_count(K)*number_of_cells(msh, K),
+  @assert(mapreduce(Ks -> facet_count(Ks)*number_of_cells(msh, Ks),
     +, cell_types(msh))+length(boundary_facet_ids) == 2*length(facets_mesh_conn),
     "mesh topology integrity check 1 failed")
   # mark connectivities as populated
@@ -319,9 +420,78 @@ function populate_connectivity!(msh::Mesh{K}) where K <: Cell
   mark_populated!(topology(msh), Codim{1}(), Dim{0}())
   # add boundary edge markers to the mesh
   cell_groups(msh)[:boundary] = boundary_facet_ids
-  #end
   msh
 end
+
+#function populate_connectivity!(msh::Mesh{Ks}) where Ks <: Cell
+#  const facet_conn_t = Connectivity{facet(Ks), subcell(Ks, Dim{0}())}
+#  # clear connectivity (in case the connectivity is already populated)
+#  clear_connectivity!(topology(msh), Codim{0}(), Codim{1}())
+#  clear_connectivity!(topology(msh), Codim{0}(), Codim{0}())
+#  clear_connectivity!(topology(msh), Codim{1}(), Dim{0}())
+#  # get facet mesh connectivity (incidence relation codim 1 -> dim 0)
+#  facets_mesh_conn = topology(msh)[Codim{1}(), Dim{0}(), true]
+#  # number of half facets
+#  N = mapreduce(K -> facet_count(K)*number_of_cells(msh, K), +, uniontypes(Ks))
+#  # allocate vector containing the connectivity of all facets
+#  cannonical_half_facets_conn =  # todo: preallocate
+#  potential_boundary_facets = Vector{Tuple{Index, fulltype(facet_conn_t)}}()
+#  # ...
+#  foreach(decompose(connectivity(msh, Codim{0}(), Dim{0}()))) do mesh_conn
+#    K = cell_type(mesh_conn)
+#    # get all half facets from the codim 0 cells of type K
+#    cannonical_half_facets_conn = Vector{Tuple{Index{K}, fulltype(facet_conn_t)}}()
+#    for (cid, cell_conn) in graph(mesh_conn)
+#      for facet_conn in facets(cell_conn)
+#        push!(cannonical_half_facets_conn, (cid, canonicalize_connectivity(facet_conn)))
+#      end
+#    end
+#    # sort
+#    sort!(cannonical_half_facets_conn)
+#    last_pid = Index{K}(0)
+#    last_facet_conn = facet_conn_t()
+#    for (pid, facet_conn) in cannonical_half_facets_conn
+#      # if the last facet was not a boundary facet
+#      if facet_conn == last_facet_conn
+#        # therefore reomove it from the potential boundary facets
+#        pop!(potential_boundary_facets)
+#        # and add it to the facet mesh connectivity
+#        push!(facets_mesh_conn, facet_conn)
+#        codim0_codim1_mesh_conn[pid] = modify(codim0_codim1_mesh_conn[pid],
+#          last(domain(facets_mesh_conn)), lidx)
+#        push!(codim0_codim1_mesh_conn, modify(lidx, ))
+#      else
+#        push!(potential_boundary_facets, (last_parent_cid, facet_conn))
+#      end
+#      last_pid = pid
+#      last_facet_conn = facet_conn
+#    end
+#  end
+#  sort!(potential_boundary_facets, by=x->x[2])
+#  boundary_facet_ids = Array{Index{facet(Ks)}, 1}()
+#  last_facet_conn = facet_conn_t()
+#  for (pid, facet_conn) in potential_boundary_facets
+#    if facet_conn == last_facet_conn
+#      pop!(boundary_facet_ids)
+#    else
+#      push!(facets_mesh_conn, facet_conn)
+#      push!(boundary_facet_ids, domain(facets_mesh_conn)[end])
+#    end
+#    last_facet_conn = facet_conn
+#  end
+#  # sanity check
+#  @assert(mapreduce(Ks -> facet_count(Ks)*number_of_cells(msh, Ks),
+#    +, cell_types(msh))+length(boundary_facet_ids) == 2*length(facets_mesh_conn),
+#    "mesh topology integrity check 1 failed")
+#  # mark connectivities as populated
+#  mark_populated!(topology(msh), Codim{0}(), Codim{1}())
+#  mark_populated!(topology(msh), Codim{0}(), Codim{0}())
+#  mark_populated!(topology(msh), Codim{1}(), Dim{0}())
+#  # add boundary edge markers to the mesh
+#  cell_groups(msh)[:boundary] = boundary_facet_ids
+#  #end
+#  msh
+#end
 
 #"""
 #Populate mesh topology (restricted bidirectional)

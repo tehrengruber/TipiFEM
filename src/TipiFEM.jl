@@ -8,7 +8,7 @@ eltype(G::Base.Generator) = Base.code_typed(G.f,(eltype(G.iter),))[1].rettype
 # export submodules
 export Meshes, PolytopalMesh
 # export types, generic functions
-export FEBasis
+export FEBasis, FESpace
 
 include("utils/utils.jl")
 include("meshes/meshes.jl")

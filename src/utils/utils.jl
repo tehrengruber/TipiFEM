@@ -71,7 +71,7 @@ function canonicalize(expr::Expr)
   end
 end
 
-type InvalidVecFnExprException <: Exception
+struct InvalidVecFnExprException <: Exception
   msg::String
   expr::Expr
 end

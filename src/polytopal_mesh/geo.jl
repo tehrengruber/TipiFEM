@@ -214,12 +214,3 @@ function local_midpoint_quad_rule{G <: Geometry{Polytope"3-node triangle"}}(::Ty
   ref_geo = reference_element(G)
   sum(map(e -> f(midpoint(e)), facets(ref_geo)))/6
 end
-
-using GaussQuadrature
-
-function gauss_quadrature{G <: Geometry{Polytope"2-node line"}}(geo::G, f::Function; order=4)
-  x, w = legendre(n) # interval [-1, 1]
-  let a=point(geo, 1), b=point(geo, 2)
-    norm(b-a)/2*sum(f.(norm(a+b)/2.*(1.+x)).*w)
-  end
-end

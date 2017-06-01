@@ -73,18 +73,21 @@ end
 #end
 
 """
-Given a codim 0 zero returns unique integer indices for all local
-interpolation points
+Given a codim zero cell id returns unique integer indices for all
+degrees of freedom on the cell
 """
 @generated function getindex(dofh::DofHandler, el_idx::Index{K}) where K <: Cell
+  # todo: in 3d this does not work if the faces of K with the same dimension
+  #  are all of the same type
+  @sanitycheck @assert dim(K) < 3 "not implemented"
+  # build an expression that assigns indices to all internal dofs
   expr = Expr(:block)
-
-  for C in skeleton(K)
+  for C in skeleton(K)[1:end-1]
     push!(expr.args, quote
-      let C=$(C), conn = connectivity(dofh.msh, K(), C())[el_idx]
+      let C=$(C), conn = connectivity(dofh.msh, K(), dim_t(C))[el_idx]
         for i in 1:face_count(K, C)
           for j in 0:multiplicity(dofh.basis, C())-1
-            result[pos] = offset(dofh, C())+convert(Int, conn[i])+j
+            @inbounds result[pos] = offset(dofh, C())+convert(Int, conn[i])+j
             #unsafe_store!(convert(Ptr{Int}, Base.pointer_from_objref(result)), didx, pos)
             pos+=1
           end
@@ -92,37 +95,41 @@ interpolation points
       end
     end)
   end
-
   quote
     n = number_of_local_shape_functions(dofh.basis, K())
     result = zeros(MVector{n, Int})
     pos=1
+    # process boundary degrees of freedom
     $(expr)
+    # process internal degrees of freedom
+    for j in 0:multiplicity(dofh.basis, K())-1
+      @inbounds result[pos] = offset(dofh, K())+el_idx+j
+    end
     result
   end
 end
 
-"cell type associated with a local dof index"
-associated_cell_type{K <: Cell}(dofh::DofHandler{K}, lidx::LocalDOFIndex) = interpret_local_index(dofh, lidx)[1]
-
-"integer in the range 0 to multiplicity(dofh.basis, associated_cell_type(K))-1"
-local_offset{K <: Cell}(dofh::DofHandler{K}, lidx::LocalDOFIndex) = interpret_local_index(dofh, lidx)[2]
-
-"""
-Given a codim zero cell type and a basis compute the cell type associated to
-the local index and its local offset
-"""
-@Base.pure function interpret_local_index{K <: Cell, lidx}(dofh::DofHandler{K}, ::LocalDOFIndex{lidx})
-  lidx_stop = 0
-  local_offset = 0
-  # iterate over the skeleton of K in order of increasing dimension
-  for T in flatten(type_scatter(skeleton(K)))
-    # every face has multiplicity many dofs
-    lidx_stop+=face_count(K, T) * multiplicity(dofh.basis, T())
-    if lidx_stop>=lidx
-      return (T, local_offset)
-    end
-    local_offset = lidx-lidx_stop
-  end
-  error("attempt get associated cell type of an invalid LocalDOFIndex")
-end
+#"cell type associated with a local dof index"
+#associated_cell_type{K <: Cell}(dofh::DofHandler{K}, lidx::LocalDOFIndex) = interpret_local_index(dofh, lidx)[1]
+#
+#"integer in the range 0 to multiplicity(dofh.basis, associated_cell_type(K))-1"
+#local_offset{K <: Cell}(dofh::DofHandler{K}, lidx::LocalDOFIndex) = interpret_local_index(dofh, lidx)[2]
+#
+#"""
+#Given a codim zero cell type and a basis compute the cell type associated to
+#the local index and its local offset
+#"""
+#@Base.pure function interpret_local_index{K <: Cell, lidx}(dofh::DofHandler{K}, ::LocalDOF{lidx})
+#  lidx_stop = 0
+#  local_offset = 0
+#  # iterate over the skeleton of K in order of increasing dimension
+#  for T in flatten(type_scatter(skeleton(K)))
+#    # every face has multiplicity many dofs
+#    lidx_stop+=face_count(K, T) * multiplicity(dofh.basis, T())
+#    if lidx_stop>=lidx
+#      return (T, local_offset)
+#    end
+#    local_offset = lidx-lidx_stop
+#  end
+#  error("attempt get associated cell type of an invalid LocalDOFIndex")
+#end

@@ -1,6 +1,6 @@
-facet(::Type{Polytope"2-node line"}) = Polytope"1-node point"
-facet(::Type{Polytope"3-node triangle"}) = Polytope"2-node line"
-facet(::Type{Polytope"4-node quadrangle"}) = Polytope"2-node line"
+@pure facet(::Type{Polytope"2-node line"}) = Polytope"1-node point"
+@pure facet(::Type{Polytope"3-node triangle"}) = Polytope"2-node line"
+@pure facet(::Type{Polytope"4-node quadrangle"}) = Polytope"2-node line"
 
 face_count(::Type{Polytope"3-node triangle"}, ::Type{Polytope"2-node line"}) = 3
 face_count(::Type{Polytope"4-node quadrangle"}, ::Type{Polytope"2-node line"}) = 4

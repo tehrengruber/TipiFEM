@@ -56,14 +56,19 @@ end
 
 import Iterators.chain
 
+#todo: rename into compose
 """
-Union two mesh functions returning a HetereogenousMeshFunction
+Union two mesh functions returning a HeterogenousMeshFunction
 """
-function chain(mf1::MeshFunction, mf2::MeshFunction)
-  indices = chain(domain(mf1), domain(mf2))
-  values = chain(image(mf1), image(mf2))
-  HeterogenousMeshFunction{cell_type(eltype(indices)), eltype(values)}(indices, values)
-end
+chain(mf1::MeshFunction, mf2::MeshFunction) = chain((mf1, mf2))
+
+chain(mfs::MeshFunction...) = chain(mfs)
+
+chain(mfs::NTuple{N, MeshFunction}) where N = HeterogenousMeshFunction(mfs)
+
+import Base.mapreduce
+# type stable version of mapreduce. todo: a lit bit hacky
+mapreduce(f, op::typeof(chain), itr) = chain(map(f, itr))
 
 struct GraphIterator{II, VI}
   indices::II
@@ -87,9 +92,12 @@ iteratorsize{I1,I2}(::Type{GraphIterator{I1,I2}}) = Base.Iterators.zip_iterators
 iteratoreltype{I1,I2}(::Type{GraphIterator{I1,I2}}) = Base.Iterators.and_iteratoreltype(iteratoreltype(I1),iteratoreltype(I2))
 
 graph(mf::MeshFunction) = GraphIterator(domain(mf), image(mf))
-idxtype(mf::MeshFunction) = eltype(domain(mf))
-cell_type(mf::MeshFunction) = cell_type(idxtype(mf))
-cell_types(mf::MeshFunction) = cell_types(idxtype(mf))
+@typeinfo idxtype{K, V}(::Type{MeshFunction{K, V}}) = Union{map(K -> Index{K}, uniontypes(K))...}
+@typeinfo cell_type{K, V}(::Type{MeshFunction{K, V}}) = K
+@typeinfo cell_types{K, V}(::Type{MeshFunction{K, V}}) = uniontypes(K)
+@typeinfo idxtype{MF <: MeshFunction}(::Type{MF}) = idxtype(supertype(MF))
+@typeinfo cell_type{MF <: MeshFunction}(::Type{MF}) = cell_type(supertype(MF))
+@typeinfo cell_types{MF <: MeshFunction}(::Type{MF}) = cell_types(supertype(MF))
 
 eltype(mf::MeshFunction) = eltype(image(mf))
 length(mf::MeshFunction) = length(image(mf))
@@ -255,6 +263,14 @@ function setindex!(mf::HomogenousMeshFunction{K, V}, v, i::Int, j::Int) where {K
 end
 
 using SimpleRepeatIterator
+
+function set_domain!(mf::HomogenousMeshFunction, domain)
+  mf.indices = domain
+end
+
+function set_image!(mf::HomogenousMeshFunction, image)
+  mf.values = image
+end
 
 function flatten(mf::HomogenousMeshFunction)
   # todo: better error handling
@@ -462,47 +478,70 @@ using Base.uniontypes
 Resolves indices whose associated cell type is of a fixed dimension to their
 mapped values.
 """
-type HeterogenousMeshFunction{K <: Cell, V, II <: Chain, VI <: Chain} <: MeshFunction{K, V}
-  indices::II
-  values::VI
+type HeterogenousMeshFunction{Ks <: Cell, Vs, HMFs <: Tuple} <: MeshFunction{Ks, Vs}
+  homogenous_mfs::HMFs
 
-  function (::Type{HeterogenousMeshFunction{K, V}})(indices::II, values::VI) where {K <: Cell, V, II, VI}
-    @assert(eltype(indices) <: Index,
-            "eltype(indices) = $(eltype(indices)) must be a subtype of $(Index)")
-    for T in uniontypes(eltype(II))
-      @assert cell_type(T) <: K "Invalid domain specified. $(T) is not a cell of type $(K)"
-    end
-    @assert eltype(values) <: V "eltype(values) = $(eltype(values)) must be a subtype of the type parameter V"
-    new{K, fulltype(V), II, VI}(indices, values)
-  end
-
-  function (::Type{HeterogenousMeshFunction{K, V, II, VI}}){K <: Cell, V, II, VI}()
-    # todo: check compatibility of K, V, II, VI
-    new{K, fulltype(V), II, VI}(II(), VI())
+  function (::Type{HeterogenousMeshFunction{Ks, Vs}})(mfs::NTuple{N, HomogenousMeshFunction}) where {N, Ks <: Cell, Vs}
+    length(mfs)!=0 || error("not allowed")
+    new{Ks, Vs, typeof(mfs)}(mfs)
   end
 end
 
-@generated function HeterogenousMeshFunction{K<:Cell, V, simple}(::Type{K}, ::Type{V}, ::Val{simple})
+@generated function HeterogenousMeshFunction(mfs::NTuple{N, MeshFunction}) where N
+  Ks = :(Union{})
+  Vs = :(Union{})
+  mfs_expr = Expr(:tuple)
+  for (i, mf) in enumerate(mfs.parameters)
+    if mf <: HeterogenousMeshFunction
+      for j in 1:length(fieldtype(mf, :homogenous_mfs).parameters)
+        push!(mfs_expr.args, :(mfs[$(i)].homogenous_mfs[$(j)]))
+        Ks = :(Union{$(Ks), cell_type($(last(mfs_expr.args)))})
+        Vs = :(Union{$(Vs), eltype($(last(mfs_expr.args)))})
+      end
+    elseif mf <: HomogenousMeshFunction
+      push!(mfs_expr.args, :(mfs[$(i)]))
+      Ks = :(Union{$(Ks), cell_type($(last(mfs_expr.args)))})
+      Vs = :(Union{$(Vs), eltype($(last(mfs_expr.args)))})
+    else
+      error("mf type $(mf) not supported")
+    end
+  end
+  :(HeterogenousMeshFunction{$(Ks), $(Vs)}($(mfs_expr)))
+end
+
+#using Iterators.link_types
+#
+#@generated function _fieldtype_from_iterators(::Type{IIC}, values::Type{VIC}) where {IIC <: Chain, VIC <: Chain}
+#  expr = Expr(:tuple)
+#  for (II, VI) in zip(link_types(IIC), link_types(VIC))
+#    push!(expr.args, HeterogenousMeshFunction{cell_type(eltype(II)), eltype(VI)})
+#  end
+#  expr
+#end
+
+using Base.@pure
+
+@generated function HeterogenousMeshFunction(::Type{K}, ::Type{V}, ::Val{simple}) where {K <: Cell, V, simple}
   typeof(K) == Union || error("type $(K) is not Union type. Maybe you meant a HomogenousMeshFunction?")
   Ks = uniontypes(K)
   Vs = typeof(V) == Union ? uniontypes(V) : [V for i in 1:length(Ks)]
   MFs = map((K, V) -> :(HomogenousMeshFunction($(K), $(V), $(Val{simple}()))), Ks, Vs)
-  :(chain($(MFs...)))
+  :(HeterogenousMeshFunction(($(MFs...),)))
 end
 
-HeterogenousMeshFunction{K<:Cell, V}(::Type{K}, ::Type{V}) = HeterogenousMeshFunction(K, V, Val{true}())
+HeterogenousMeshFunction{Ks <: Cell, Vs}(::Type{Ks}, ::Type{Vs}) = HeterogenousMeshFunction(Ks, Vs, Val{true}())
 
 #function IsSortedByCellType(mf::GenericMeshFunction)
 #  mf = MeshFunction(cell_type(mf), eltype(mf))
 #
 #end
 
-domain(mf::HeterogenousMeshFunction) = mf.indices
-image(mf::HeterogenousMeshFunction) = mf.values
-idxtype{HMF <: HeterogenousMeshFunction}(::Type{HMF}) = eltype(fieldtype(HMF, :indices))
-eltype{HMF <: HeterogenousMeshFunction}(::Type{HMF}) = eltype(fieldtype(HMF, :values))
-domain_type{HMF <: HeterogenousMeshFunction}(::Type{HMF}) = fieldtype(HMF, :indices)
-image_type{HMF <: HeterogenousMeshFunction}(::Type{HMF}) = fieldtype(HMF, :values)
+domain(mf::HeterogenousMeshFunction) = chain(map(hmf -> domain(hmf), decompose(mf))...)
+image(mf::HeterogenousMeshFunction) = chain(map(hmf -> image(hmf), decompose(mf))...)
+@pure idxtype{HMF <: HeterogenousMeshFunction}(::Type{HMF}) = Union{(Index{K} for K in uniontypes(tparam(HMF, 1)))...}
+@pure eltype{HMF <: HeterogenousMeshFunction}(::Type{HMF}) = Union{uniontypes(tparam(HMF, 2))...}
+#@pure domain_type{HMF <: HeterogenousMeshFunction}(::Type{HMF}) = fieldtype(HMF, :indices)
+#@pure image_type{HMF <: HeterogenousMeshFunction}(::Type{HMF}) = fieldtype(HMF, :values)
 
 getindex(mf::HeterogenousMeshFunction, i::Index{K}) where K <: Cell = mf[K][i]
 getindex(mf::HeterogenousMeshFunction, i::Index{K}, j::Int) where K <: Cell = mf[K][i, j]
@@ -512,12 +551,8 @@ setindex!(mf::HeterogenousMeshFunction, v, i::Index{K}, j::Int) where K <: Cell 
 """
 Decompose `HeterogenousMeshFunction` into a set of `HomogenousMeshFunction`s
 """
-@generated function decompose(mf::HeterogenousMeshFunction)
-  expr = Expr(:tuple)
-  for i in 1:length(fieldtype(mf, :indices).parameters[1].parameters)
-    push!(expr.args, :(HomogenousMeshFunction(mf.indices.xss[$(i)], mf.values.xss[$(i)])))
-  end
-  expr
+function decompose(mf::HeterogenousMeshFunction)
+  mf.homogenous_mfs
 end
 
 function empty!(mf::HeterogenousMeshFunction)
@@ -568,42 +603,47 @@ mf=mf1 ∪ mf2
 ```
 """
 @generated function getindex{T <: Cell}(mf::HeterogenousMeshFunction, ::Type{T})
-  local indices_expr, values_expr
-
-  ii_indices = get_chain_indices_for_cell_type(fieldtype(mf, :indices), T)
-  # if only one link in the chain matches the type
-  if length(ii_indices)==1
-    let i=first(ii_indices)
-      indices_expr = :(link(mf.indices, $(ChainLinkIndex{i}())))
-      values_expr = :(link(mf.values, $(ChainLinkIndex{i}())))
+  hmf_indices = []
+  Ks = Union{} # todo: change to tuple
+  Vs = Union{}
+  for (i, HMF) in enumerate(tparam(mf, 3).parameters)
+    if cell_type(HMF) == T
+      push!(hmf_indices, i)
+      Ks = Union{Ks, cell_type(HMF)}
+      Vs = Union{Ks, eltype(HMF)}
     end
-    :(HomogenousMeshFunction($(indices_expr), $(values_expr)))
-  else # if multiple links in the chain match the type
-    hom_mfs = map(i->:(HomogenousMeshFunction(link(mf.indices, $(ChainLinkIndex{i}())),
-                                              link(mf.values, $(ChainLinkIndex{i}())))), 1:length(ii_indices))
-    :($(chain)($(hom_mfs...)))
+  end
+  if length(hmf_indices) == 0
+    error("Can not constrain HeterogenousMeshFunction to type $(T)")
+  elseif length(hmf_indices) == 1
+    :(mf.homogenous_mfs[$(first(hmf_indices))])
+  else
+    homogenous_mfs = map(i -> :(mf.homogenous_mfs[$(i)]), hmf_indices)
+    :(HeterogenousMeshFunction{$(Ks), $(Vs)}($(homogenous_mfs...)))
   end
 end
 
 import Base.setindex!
-@generated function setindex!{MF <: HomogenousMeshFunction, T <: Cell}(mf1::HeterogenousMeshFunction, mf2::MF, ::Type{T})
-  local indices_expr, values_expr
-  cell_type(idxtype(mf2)) == T || error("eltype(mf2)==T, $(cell_type(idxtype(mf2)))==$(T)")
-  ii_indices = get_chain_indices_for_cell_type(fieldtype(mf1, :indices), T)
-  indices_exprs = []
-  values_exprs = []
-  for i in 1:length(fieldtype(fieldtype(mf1, :indices), :xss).parameters)
-    if i ∈ ii_indices
-      push!(indices_exprs, :(domain(mf2)))
-      push!(values_exprs, :(image(mf2)))
+@generated function setindex!(mf1::HeterogenousMeshFunction, mf2::MF, ::Type{T}) where {MF <: HomogenousMeshFunction, T <: Cell}
+  hmf_index = let hmf_indices = []
+    for (i, HMF) in enumerate(tparam(mf1, 3).parameters)
+      if cell_type(HMF) == T
+        push!(hmf_indices, i)
+      end
+    end
+    length(hmf_indices)==1 || error("setindex not supported")
+    first(hmf_indices)
+  end
+  expr = Expr(:tuple)
+  for i in 1:length(tparam(mf1, 3).parameters)
+    if i==hmf_index
+      push!(expr.args, :(mf2))
     else
-      push!(indices_exprs, :(link(mf1.indices, $(i))))
-      push!(values_exprs, :(link(mf1.values, $(i))))
+      push!(expr.args, :(mf1.homogenous_mfs[$(i)]))
     end
   end
   quote
-    mf1.indices = chain($(indices_exprs...))
-    mf1.values = chain($(values_exprs...))
+    mf1.homogenous_mfs = $(expr)
     mf1
   end
 end
@@ -611,19 +651,18 @@ end
 getindex{T <: Cell}(mf::HeterogenousMeshFunction, idx::Index{T}) = mf[T][idx]
 
 function push!(mf::HeterogenousMeshFunction, ::Union{Type{K}, K}, v::T) where {K <: Cell, T}
-  let mf_constrained = mf[K]
-    push!(mf_constrained, v)
-    mf[K] = mf_constrained
-  end
+  push!(mf[K], v)
   mf
 end
 
 function push!(mf::HeterogenousMeshFunction, i::Index{K}, v::T) where {K <: Cell, T}
-  let mf_constrained = mf[K]
-    push!(mf_constrained, i, v)
-    mf[K] = mf_constrained
-  end
+  push!(mf[K], i, v)
   mf
+end
+
+# todo: check type stability and performance
+function graph(mf::HeterogenousMeshFunction)
+  chain(map(hmf -> graph(hmf), decompose(mf))...)
 end
 
 # todo: this is a general pattern so it might be useful to create a macro for this
