@@ -1,9 +1,9 @@
 immutable CellRef{CELL_ <: Cell, MESH_ <: Mesh}
   mesh::MESH_
-  idx::Index{CELL_}
+  idx::Id{CELL_}
 end
 
-CellRef{CELL_ <: Cell, MESH_ <: Mesh}(mesh::MESH_, index::Index{CELL_}) =
+CellRef{CELL_ <: Cell, MESH_ <: Mesh}(mesh::MESH_, index::Id{CELL_}) =
   CellRef{CELL_, MESH_}(mesh, index)
 
 mesh{CELL_ <: Cell, MESH_ <: Mesh}(cell::CellRef{CELL_, MESH_}) = cell.mesh

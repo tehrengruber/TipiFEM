@@ -43,8 +43,8 @@ end
 # Connectivity
 #
 "Store all indices of `T2` cells incident to a `T1` cell."
-@computed immutable Connectivity{T1 <: Cell, T2 <: Cell} <: StaticVector{Index{T2}}
-    data::NTuple{incidentee_count(T1, T2), Index{T2}}
+@computed immutable Connectivity{T1 <: Cell, T2 <: Cell} <: StaticVector{Id{T2}}
+    data::NTuple{incidentee_count(T1, T2), Id{T2}}
 
     function (::Type{Connectivity{T1, T2}}){T1 <: Cell, T2 <: Cell, N, IT}(in::NTuple{N, IT})
       @boundscheck all(x->x!=0, in) || error("Cell ids must be non zero")
@@ -105,14 +105,14 @@ const NeighbourConnectivity{C <: Cell} = Connectivity{C, C}
 #
 # VariableConnectivity
 #
-const VariableConnectivity{FACE <: Cell} = Array{Index{FACE}, 1} # K <: Cell,
+const VariableConnectivity{FACE <: Cell} = Array{Id{FACE}, 1} # K <: Cell,
 
 #
 # NeighbourConnectivity
 #
 #"Stores incident facets of type FT to a cell of type CT"
-#@computed immutable NeighbourConnectivity{K <: Cell} <: StaticVector{Index{K}}
-#    data::NTuple{face_count(K, subcell(K)), Index{K}}
+#@computed immutable NeighbourConnectivity{K <: Cell} <: StaticVector{Id{K}}
+#    data::NTuple{face_count(K, subcell(K)), Id{K}}
 #
 #    function (::Type{NeighbourConnectivity{K}}){K <: Cell, N, IT}(in::NTuple{N, IT})
 #      new(in)

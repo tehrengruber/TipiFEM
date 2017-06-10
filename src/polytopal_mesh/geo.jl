@@ -5,19 +5,17 @@ using TipiFEM.Utils: @generate_sisd
 
 "Geometry of the reference triangle"
 function reference_element(::Polytope"3-node triangle")
-  Geometry{Polytope"3-node triangle", 2, Float64}(
-    SVector{2, Float64}(0, 0),
-    SVector{2, Float64}(1, 0),
-    SVector{2, Float64}(0, 1))
+  Geometry{Polytope"3-node triangle", 2, Float64}((0, 0), (1, 0), (0, 1))
 end
 
 "Geometry of the reference quadrangle"
 function reference_element(::Polytope"4-node quadrangle")
-  Geometry{Polytope"4-node quadrangle", 2, Float64}(
-    SVector{2, Float64}(0, 0),
-    SVector{2, Float64}(1, 0),
-    SVector{2, Float64}(1, 1),
-    SVector{2, Float64}(0, 1))
+  Geometry{Polytope"4-node quadrangle", 2, Float64}((0, 0), (1, 0), (1, 1), (0, 1))
+end
+
+"Geometry of the reference edge"
+function reference_element(::Polytope"2-node line")
+  Geometry{Polytope"2-node line", 1, Float64}(0, 1)
 end
 
 # todo: rewrite geometry and topology reduction by this simple rules
@@ -73,7 +71,7 @@ function refine{G <: Geometry{Polytope"3-node triangle"}}(geo::G)
   (triangle_1, triangle_2)
 end
 
-function refine!(mesh::Mesh, id::Index{C}) where C <: Cell
+function refine!(mesh::Mesh, id::Id{C}) where C <: Cell
   mesh_conn = vertex_connectivity(mesh, C())
   conn = mesh_conn[id]
   geo = geometry(mesh, id)
@@ -133,29 +131,47 @@ function integration_element(geo::Geometry{Polytope"4-node quadrangle"}, x::SVec
   det(jacobian_transposed(geo, x))
 end
 
+integration_element(geo::Geometry{Polytope"2-node line"}) = volume(geo)
+
+integration_element{n}(geo::Geometry{Polytope"2-node line"}, x::Union{SVector{n, <: Real}, SMatrix{n, 1, <:Real}}) = volume(geo)
+
+integration_element(geo::Geometry{Polytope"2-node line"}, x::Real) = volume(geo)
+
+normal(geo::Geometry{Polytope"2-node line", 2}) = SMatrix{2, 2, Int}(0, 1, -1, 0)*(point(geo, 2)-point(geo, 1))
+
 """
 Maps local to global coordinates or in other words given a set of coordinates
 on the reference element map them to coordinates on `G`.
 
 Φ: K̂ → K with K̂ ⊂ ℝ^local_dim, K ⊂ ℝ^world_dim
 """
-@generate_sisd function local_to_global(geo::Geometry{C, world_dim},
-    x̂s::SMatrix{@VectorWidth(n), local_dim, T}) where {C <: Polytope, world_dim, local_dim, n, T<:Real}
-  # old version: local_shape_functions(FEBasis{:Lagrangian, 1}(), C(), x̂s)*geo
-  # todo: benchmark in comparision to the old version
-
-  # allocate result
-  # todo:
-  global_coords = zeros(MMatrix{n, world_dim})
-  # evaluate local shape functions
-  #  the i-th index containts the values of the i-th local shape function
-  lsfns = local_shape_functions(FEBasis{:Lagrangian, 1}(), C(), x̂s)
+@generated function local_to_global(geo::Geometry{C, world_dim},
+    x̂s::SMatrix{n, local_dim, T}) where {C <: Polytope, world_dim, local_dim, n, T<:Real}
+  expr = Expr(:call, :hcat)
   for d in 1:world_dim
-    for i in 1:vertex_count(geo)
-      global_coords[:, d] += geo[i, d] * lsfns[i]
-    end
+    push!(expr.args, :(dot(geo[:, $(d)], lsfns)))
   end
-  SMatrix{n, world_dim}(global_coords)
+
+  quote
+    # evaluate local shape functions
+    #  the i-th index containts the values of the i-th local shape function
+    lsfns = local_shape_functions(FEBasis{:Lagrangian, 1}(), C(), x̂s)
+    $(expr)
+  end
+end
+
+function local_to_global(geo::Geometry{C, world_dim}, x̂::SVector{local_dim, T}) where {C <: Polytope, world_dim, local_dim, T<:Real}
+  local_to_global(geo, SMatrix{1, local_dim, T}(x̂))
+end
+
+function local_to_global(geo::Geometry{Polytope"2-node line", world_dim},
+    x̂s::SVector{n, T}) where {world_dim, n, T<:Real}
+  local_to_global(geo, SMatrix{n, 1, T}(x̂s))
+end
+
+function local_to_global(geo::Geometry{Polytope"2-node line", world_dim},
+    x̂s::T) where {world_dim, T<:Real}
+  local_to_global(geo, SMatrix{1, 1, T}(x̂s))'
 end
 
 #function local_to_global{G <: Geometry{Polytope"3-node triangle"}, REAL_ <: Real}(geo::G, x::SVector{2, REAL_})
@@ -169,12 +185,8 @@ end
 
 function jacobian_transposed(geo::Geometry{C, world_dim},
     x̂::SVector{local_dim, T}) where {C <: Polytope, world_dim, local_dim, T<:Real}
-  #jacobian = MMatrix{world_dim, local_dim, eltype(x̂)}
   grads = grad_local_shape_functions(FEBasis{:Lagrangian, 1}(), C(), x̂)
-  grads_mat = hcat(grads...)
-
-  res = grads_mat*geo
-  res
+  reduce(hcat, grads)*geo
 end
 
 function jacobian_inverse_transposed(geo::Geometry{C, world_dim},

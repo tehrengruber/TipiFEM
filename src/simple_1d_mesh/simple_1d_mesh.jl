@@ -42,9 +42,9 @@ volume(geo::Geometry{Edge}) = point(geo, 2)[1] - point(geo, 1)[1]
 #  1, point(geo, 3)...
 #)
 
-#facets(mesh, idx::Index{Triangle}) = connectivity(mesh, Triangle, facet(Triangle))[idx]
-#cofacets(mesh, idx::CanonicalIndex{Edge}) = connectivity(mesh, Edge, cofacet(Edge))[idx]
-#cofacet(mesh, idx::Index{Edge}) = connectivity(mesh, Edge, cofacet(Edge))[idx]
+#facets(mesh, idx::Id{Triangle}) = connectivity(mesh, Triangle, facet(Triangle))[idx]
+#cofacets(mesh, idx::CanonicalId{Edge}) = connectivity(mesh, Edge, cofacet(Edge))[idx]
+#cofacet(mesh, idx::Id{Edge}) = connectivity(mesh, Edge, cofacet(Edge))[idx]
 
 
 #boundary(t::Triangle) = (Connectivity{Edge, Vertex}(vertex(tri, 1), vertex(tri, 2)),
@@ -76,8 +76,8 @@ volume(geo::Geometry{Edge}) = point(geo, 2)[1] - point(geo, 1)[1]
 #
 #cells(mesh, (:connectivity, :geometry, (e) -> volume(e)))
 #
-#local_shape_function(::FEBasis{Edge, :Lagrangian, :Linear}, ::LocalDOFIndex{1}) = x -> 2(1-x)-1
-#local_shape_function(::FEBasis{Edge, :Lagrangian, :Linear}, ::LocalDOFIndex{2}) = x -> 2x
+#local_shape_function(::FEBasis{Edge, :Lagrangian, :Linear}, ::LocalDOFId{1}) = x -> 2(1-x)-1
+#local_shape_function(::FEBasis{Edge, :Lagrangian, :Linear}, ::LocalDOFId{2}) = x -> 2x
 
 @export_mesh_interface(Cell)
 

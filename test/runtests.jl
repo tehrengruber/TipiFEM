@@ -24,8 +24,8 @@ module TestMesh
   #@inferred Mesh(Edge)
 
   edge_conn = Connectivity{Edge, Vertex}(1, 2)
-  @test vertex(edge_conn, 1) == Index{Vertex}(1)
-  @test vertex(edge_conn, 2) == Index{Vertex}(2)
+  @test vertex(edge_conn, 1) == Id{Vertex}(1)
+  @test vertex(edge_conn, 2) == Id{Vertex}(2)
 
   edge_geo = Geometry{Edge, dim(Edge), Float64}(
     SVector{1, Float64}(1.),
@@ -66,35 +66,35 @@ using TipiFEM.PolytopalMesh
 # cell index
 ################################################################################
 # logic operations
-@test 6 < Index"3-node triangle"(7) < 8
-@test 8 > Index"3-node triangle"(7) > 6
-@test 7 <= Index"3-node triangle"(7) <= 7
-@test 7 >= Index"3-node triangle"(7) >= 7
-let i1=Index"3-node triangle"(2), i2=Index"3-node triangle"(3)
+@test 6 < Id"3-node triangle"(7) < 8
+@test 8 > Id"3-node triangle"(7) > 6
+@test 7 <= Id"3-node triangle"(7) <= 7
+@test 7 >= Id"3-node triangle"(7) >= 7
+let i1=Id"3-node triangle"(2), i2=Id"3-node triangle"(3)
   @test i1 == i1
   @test i1 <= i2
   @test i1 <  i2
   @test i2 >  i1
   @test i2 >= i1
 end
-@test Index"3-node triangle"(7) < Index"3-node triangle"(8)
-@test Index"3-node triangle"(8) > Index"3-node triangle"(7)
-@test Index"3-node triangle"(7) <= Index"3-node triangle"(8)
-@test Index"3-node triangle"(8) >= Index"3-node triangle"(7)
-@test Index"3-node triangle"(7) <= Index"3-node triangle"(7)
-@test Index"3-node triangle"(7) >= Index"3-node triangle"(7)
+@test Id"3-node triangle"(7) < Id"3-node triangle"(8)
+@test Id"3-node triangle"(8) > Id"3-node triangle"(7)
+@test Id"3-node triangle"(7) <= Id"3-node triangle"(8)
+@test Id"3-node triangle"(8) >= Id"3-node triangle"(7)
+@test Id"3-node triangle"(7) <= Id"3-node triangle"(7)
+@test Id"3-node triangle"(7) >= Id"3-node triangle"(7)
 
 # arithmetic
-@test Index"3-node triangle"(7)+1 == Index"3-node triangle"(8)
-@test Index"3-node triangle"(7)-1 == Index"3-node triangle"(6)
+@test Id"3-node triangle"(7)+1 == Id"3-node triangle"(8)
+@test Id"3-node triangle"(7)-1 == Id"3-node triangle"(6)
 
 # ranges
-@inferred UnitRange(Index"3-node triangle"(2), Index"3-node triangle"(10))
-@inferred StepRange(Index"3-node triangle"(1), 2, Index"3-node triangle"(10))
-@inferred Base.OneTo(Index"3-node triangle"(10))
-let range = Index"3-node triangle"(2):Index"3-node triangle"(10)
-  @test first(range)==Index"3-node triangle"(2)
-  @test last(range)==Index"3-node triangle"(10)
+@inferred UnitRange(Id"3-node triangle"(2), Id"3-node triangle"(10))
+@inferred StepRange(Id"3-node triangle"(1), 2, Id"3-node triangle"(10))
+@inferred Base.OneTo(Id"3-node triangle"(10))
+let range = Id"3-node triangle"(2):Id"3-node triangle"(10)
+  @test first(range)==Id"3-node triangle"(2)
+  @test last(range)==Id"3-node triangle"(10)
   @test typeof(start(range)) == typeof(next(range, start(range))[2])
   @test length(range)==9
   @inferred start(range)
@@ -102,9 +102,9 @@ let range = Index"3-node triangle"(2):Index"3-node triangle"(10)
   @inferred first(range)
   @inferred last(range)
 end
-let range = Index"3-node triangle"(1):2:Index"3-node triangle"(10)
-  @test first(range)==Index"3-node triangle"(1)
-  @test last(range)==Index"3-node triangle"(9)
+let range = Id"3-node triangle"(1):2:Id"3-node triangle"(10)
+  @test first(range)==Id"3-node triangle"(1)
+  @test last(range)==Id"3-node triangle"(9)
   @test typeof(start(range)) == typeof(next(range, start(range))[2])
   @test length(range)==5
   @inferred start(range)
@@ -112,9 +112,9 @@ let range = Index"3-node triangle"(1):2:Index"3-node triangle"(10)
   @inferred first(range)
   @inferred last(range)
 end
-let range = Base.OneTo(Index"3-node triangle"(10))
-  @test first(range)==Index"3-node triangle"(1)
-  @test last(range)==Index"3-node triangle"(10)
+let range = Base.OneTo(Id"3-node triangle"(10))
+  @test first(range)==Id"3-node triangle"(1)
+  @test last(range)==Id"3-node triangle"(10)
   @test typeof(start(range)) == typeof(next(range, start(range))[2])
   @test length(range)==10
   @inferred start(range)
@@ -146,7 +146,7 @@ let mf=MeshFunction(Polytope"1-node point", Int)
   empty!(mf)
   @test length(mf) == 0
 end
-let indices = Index"3-node triangle"(1):Index"3-node triangle"(10),
+let indices = Id"3-node triangle"(1):Id"3-node triangle"(10),
     values = 1:10
   @inferred MeshFunction(indices, values)
   mf = MeshFunction(indices, values)
@@ -156,8 +156,8 @@ info(" - HetereogenousMeshFunction")
 let mf=MeshFunction(Union{Polytope"3-node triangle", Polytope"4-node quadrangle"}, Int)
   push!(mf, Polytope"3-node triangle", 1)
   push!(mf, Polytope"4-node quadrangle", 2.)
-  @test mf[Index"3-node triangle"(1)]==1
-  @test mf[Index"4-node quadrangle"(1)]==2
+  @test mf[Id"3-node triangle"(1)]==1
+  @test mf[Id"4-node quadrangle"(1)]==2
   @test length(mf[Polytope"3-node triangle"]) == 1
   @test length(mf[Polytope"4-node quadrangle"]) == 1
   @test mf[Polytope"3-node triangle"][1] == 1
@@ -186,9 +186,9 @@ let mesh = Mesh(Polytope"3-node triangle")
   add_vertex!(mesh, 0, 0)
   add_vertex!(mesh, 0, 1)
   add_vertex!(mesh, 1, 1)
-  @test nodal_coordinates(mesh)[Index"1-node point"(1)]==[0, 0]
-  @test nodal_coordinates(mesh)[Index"1-node point"(2)]==[0, 1]
-  @test nodal_coordinates(mesh)[Index"1-node point"(3)]==[1, 1]
+  @test nodal_coordinates(mesh)[Id"1-node point"(1)]==[0, 0]
+  @test nodal_coordinates(mesh)[Id"1-node point"(2)]==[0, 1]
+  @test nodal_coordinates(mesh)[Id"1-node point"(3)]==[1, 1]
   @test number_of_cells(mesh, Polytope"1-node point") == 3
 
   # ensure that no cells with index zero may be added
@@ -197,7 +197,7 @@ let mesh = Mesh(Polytope"3-node triangle")
   # connect vertices
   add_cell!(mesh, Polytope"3-node triangle", 1, 2, 3)
   @test length(geometry(mesh)) == 1
-  @test geometry(mesh)[Index"3-node triangle"(1)]==Geometry{Polytope"3-node triangle", 2, Float64}(
+  @test geometry(mesh)[Id"3-node triangle"(1)]==Geometry{Polytope"3-node triangle", 2, Float64}(
     (0, 0),
     (0, 1),
     (1, 1))
@@ -324,7 +324,7 @@ module TestMesh
 
   # test CellRef type
   #let msh = Mesh(Edge),
-  #    idx = Index{Vertex}(1),
+  #    idx = Id{Vertex}(1),
   #    ref = CellRef(msh, idx)
 
   #  # the inference algorithm of a standard julia installation has a
@@ -354,14 +354,14 @@ module TestMesh
     add_vertex!(msh, 1)
     add_cell!(msh, Edge, 1, 2)
 
-    vtx = CellRef(msh, Index{Vertex}(2))
-    cell = CellRef(msh, Index{Edge}(1))
+    vtx = CellRef(msh, Id{Vertex}(2))
+    cell = CellRef(msh, Id{Edge}(1))
 
     @inferred nodal_coordinates(vtx)
 
-    #@test_throws AssertionError coordinates(msh, Index{Edge}(2))
-    @test coordinates(vtx) == coordinates(msh, Index{Vertex}(2)) == SVector{1, Float64}(1)
-    @test coordinates(msh, Index{Vertex}(1)) != coordinates(msh, Index{Vertex}(2))
+    #@test_throws AssertionError coordinates(msh, Id{Edge}(2))
+    @test coordinates(vtx) == coordinates(msh, Id{Vertex}(2)) == SVector{1, Float64}(1)
+    @test coordinates(msh, Id{Vertex}(1)) != coordinates(msh, Id{Vertex}(2))
     @test volume(cell) == 1.
 
     display(@code_warntype coordinates(vertex(cell, 2)))
@@ -475,13 +475,13 @@ dim(::Type{vertex}) = 0
 # cell index
 ################################################################################
 # logic operations
-@test 6 < Index"3-node triangle"(7) < 8
-@test 8 > Index"3-node triangle"(7) > 6
-@test 7 <= Index"3-node triangle"(7) <= 7
-@test 7 >= Index"3-node triangle"(7) >= 7
+@test 6 < Id"3-node triangle"(7) < 8
+@test 8 > Id"3-node triangle"(7) > 6
+@test 7 <= Id"3-node triangle"(7) <= 7
+@test 7 >= Id"3-node triangle"(7) >= 7
 # arithmetic
-@test Index"3-node triangle"(7)+1 == Index"3-node triangle"(8)
-@test Index"3-node triangle"(7)-1 == Index"3-node triangle"(6)
+@test Id"3-node triangle"(7)+1 == Id"3-node triangle"(8)
+@test Id"3-node triangle"(7)-1 == Id"3-node triangle"(6)
 
 ################################################################################
 # cell connectivity

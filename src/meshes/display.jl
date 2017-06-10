@@ -1,4 +1,3 @@
-using Iterators
 import Base.show
 
 function show{K <: Cell}(io::IO, ::MIME"text/plain", mesh_topology::MeshTopology{K}; simple=false, indent=0)

@@ -3,6 +3,7 @@ using TipiFEM.Utils.@sanitycheck
 include("febasis.jl")
 include("dofhandler.jl")
 include("fespace.jl")
+include("triplets.jl")
 
 # local assembler
 """
@@ -65,90 +66,134 @@ function matrix_assembler(a::Function, msh::Mesh, basis::FEBasis, dofh::Abstract
 end
 
 function matrix_assembler(el_matrix::Function, trial_space::FESpace, test_space::FESpace)
-  @assert dofh(trial_space)==dofh(test_space) "dofh of the trial and test space must be equal"
-  # choose the mesh with the lowest number of elements
-  let mesh = number_of_elements(mesh(trial_space)) > number_of_elements(mesh(test_space)),
-      dofh = dofh(trial_space),
+  # select the active cells of lowest amount from the trial and test space
+  # note that the selected active cells must be a subset of the not
+  #  selected active cells
+  let active_cells = if length(active_cells(trial_space)) < length(active_cells(test_space))
+      active_cells(trial_space)
+    else
+      active_cells(test_space)
+    end
+    # invoke the actual matrix assembler
+    matrix_assembler(el_matrix::Function, active_cells, trial_space, test_space)
+  end
+end
+
+function matrix_assembler(el_matrix::Function, cells::HomogeneousIdIterator{C},
+    trial_space::FESpace, test_space::FESpace; triplets=nothing) where C <: Cell
+  let dofh = dofh(trial_space),
       basis_trial = basis(trial_space),
       basis_test = basis(test_space),
-      mesh_geo = geometry(mesh(trial_space))
-
-    # todo: sanity checks on a
-    # total number of local contributions
-    N = min(number_of_active_dofs(trial_space), number_of_active_dofs(test_space))
-    # row indices
-    I = Array{Int, 1}(N)
-    # column indices
-    J = Array{Int, 1}(N)
-    # matrix values
-    V = Array{real_type(mesh), 1}(N)
-    # current index into the row-indices, column-indices, values array
-    k = 1
-    # compute matrix elements for each cell type
-    map(cell_types(mesh)) do K
-      # compute and distribute element matrix for each cell
-      for (cidx, geo) in graph(mesh_geo[K]) # todo: remove [K]
-        # get global indices for the current element
-        dofs = dofh[cidx]
-        # get active degrees of freedom
-        isactive = active_dofs(trial_space, cidx)
-        @sanitycheck assert(active_dofs(trial_space, cidx) == active_dofs(test_space, cidx))
-        # asseble element matrix
-        el_mat = el_matrix(cidx, geo, dofs)
-        # compute and distribute element stiffness matrix
-        for i in 1:size(el_mat, 1)
-          for j in 1:size(el_mat, 2)
-            if is_dof_active(trial_space, dofs[i]) && is_dof_active(trial_space, dofs[j])
-              I[k] = dofs[j]
-              J[k] = dofs[i]
-              V[k] = el_mat[i, j]
-              k+=1
-            end
+      mesh = mesh(trial_space)
+    # allocate triplets
+    if triplets == nothing
+      # approximate number of triplets
+      N::Int = number_of_cells(mesh, C())*number_of_local_shape_functions(basis_trial, C())^2
+      triplets = Triplets{real_type(mesh)}(N)
+    end
+    # ensure that the triplets type is inferred
+    triplets::Triplets{real_type(mesh)}
+    # compute and distribute element matrix for each cell
+    for (cid, geo) in graph(geometry(mesh, cells))
+      # get global indices for the current element
+      dofs = dofh[cid]
+      # get active degrees of freedom
+      isactive = active_dofs(trial_space, cid)
+      @sanitycheck @assert(active_dofs(trial_space, cid) == active_dofs(test_space, cid),
+        "DOFs on $(cid) that were active in the trial space where not active in the test space")
+      # assemble element matrix
+      el_mat = el_matrix(cid, geo)
+      @sanitycheck assert(length(el_mat) == number_of_local_shape_functions(basis_trial, cell_type(cells)())^2)
+      # compute and distribute element stiffness matrix
+      for i in 1:size(el_mat, 1)
+        for j in 1:size(el_mat, 2)
+          if isactive[j]
+          #if isactive[i] && isactive[j] # agumentation
+            push!(triplets, dofs[j], dofs[i], el_mat[i, j])
           end
         end
       end
     end
-    # convert triplets into CSC format
-    m = sparse(I, J, V)
-    # remove rows of inactive cells in the test space
-    #  since this is CSC this might be expensive
-    #m[inactive_cells(test_space), :] = 0
-    # remove coloums of inactive cells in the trial space
-    #m[:, inactive_cells(trial_space)] = 0
+  end
+end
+
+function matrix_assembler(el_matrix::Function, cells::HeterogenousIdIterator, trial_space::FESpace, test_space::FESpace)
+  @assert dofh(trial_space).offset==dofh(test_space).offset "dofh of the trial and test space must be equal"
+  @assert mesh(trial_space)==mesh(test_space) "finite element spaces must be defined on the same mesh"
+  let dofh = dofh(trial_space),
+      basis_trial = basis(trial_space),
+      basis_test = basis(test_space),
+      mesh = mesh(trial_space)
+    # total number of local contributions
+    N::Int = mapreduce(+, uniontypes(cell_type(cells))) do K
+      number_of_cells(mesh, K())*number_of_local_shape_functions(basis_trial, K())^2
+    end
+    # allocate triplets
+    triplets = Triplets{real_type(mesh)}(N)
+    # call the assembler on all homogenous id iterators
+    foreach(decompose(cells)) do cells
+      matrix_assembler(el_matrix, cells, trial_space, test_space, triplets=triplets)
+    end
+    triplets
   end
 end
 
 "incorporate constraints into the galerkin matrix and rhs vector"
-function incorporate_constraints(fespace, galerkin_matrix, rhs_vector)
-  for constraint in constraints(trial_space)
-    for (id, v) in graph(constraint)
+function incorporate_constraints(fespace::FESpace, galerkin_matrix, rhs_vector)
+  for constraint in constraints(fespace)
+    for (dof, v) in zip(indices(constraint), values(constraint))
       # set diagonal entries of constrained dofs to 1
-      @sanitycheck @assert m[id, :] == 0 "do not test where the solution is known"
-      m[id, id] = 1
+      #@sanitycheck @assert nnz(galerkin_matrix[dof, :]) == 0 "do not test where the solution is known (at dof: $(dof))"
+      galerkin_matrix[dof, dof] = 1
       # modify rhs vector
-      rhs_vector[id] = v
+      rhs_vector[dof] = v
     end
   end
 end
 
-function vector_assembler(l::Function, msh::Mesh, basis::FEBasis, dofh::AbstractDofHandler)
-  N = number_of_dofs(dofh)
-  V = zeros(real_type(msh), N)
-  k = 1
-  map(cell_types(msh)) do K
-    n = number_of_local_shape_functions(basis, K())
-    el_vec = element_load_vector(l, K(), basis)
-    for (cidx, geo) in graph(geometry(msh)[K])
-      # get degrees of freedom for the current element
-      dofs = dofh[cidx]
-      # distribute local/element load vector
-      for i in 1:n
-          V[dofs[i]] += el_vec[i](geo)
+function vector_assembler(el_vector::Function, fespace::FESpace)
+  let dofh = dofh(fespace),
+      mesh = mesh(fespace),
+      basis = basis(fespace),
+      mesh_geo = geometry(mesh)
+    N = number_of_dofs(fespace)
+    V = zeros(real_type(mesh), N)
+    k = 1
+    map(cell_types(mesh)) do K
+      n = number_of_local_shape_functions(basis, K())
+      for (cid, geo) in graph(mesh_geo[K])
+        # get degrees of freedom for the current element
+        dofs = dofh[cid]
+        # assemble element vector
+        el_vec = el_vector(cid, geo)
+        # distribute local/element load vector
+        for i in 1:n
+            V[dofs[i]] += el_vec[i]
+        end
       end
     end
+    V
   end
-  V
 end
+
+#function vector_assembler(l::Function, msh::Mesh, basis::FEBasis, dofh::AbstractDofHandler)
+#  N = number_of_dofs(dofh)
+#  V = zeros(real_type(msh), N)
+#  k = 1
+#  map(cell_types(msh)) do K
+#    n = number_of_local_shape_functions(basis, K())
+#    el_vec = element_load_vector(l, K(), basis)
+#    for (cidx, geo) in graph(geometry(msh)[K])
+#      # get degrees of freedom for the current element
+#      dofs = dofh[cidx]
+#      # distribute local/element load vector
+#      for i in 1:n
+#          V[dofs[i]] += el_vec[i](geo)
+#      end
+#    end
+#  end
+#  V
+#end
 
 #struct Functional
 #  args::Array{Symbol, 1}
@@ -166,7 +211,7 @@ end
 
 #a(b̂[i], b̂[j])
 
-a(u, v) = geo -> integrate_local(x̂->u(x̂)v(x̂), geo)
+#a(u, v) = geo -> integrate_local(x̂->u(x̂)v(x̂), geo)
 
 ##
 #@functional a(u, v) = ∫ α(x) * u(̂x)v(̂x) dΩ_1

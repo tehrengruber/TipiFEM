@@ -17,10 +17,10 @@ Mesh(Union{Polygon"3-node triangle", Polygon"4-node quadrangle"})
 """
 @computed immutable Mesh{K, world_dim, REAL_ <: Real, simple, PM}
   nodes::HomogenousMeshFunction{vertex(K), SVector{world_dim, REAL_},
-    simple ? OneTo{Index{vertex(K)}} : Vector{Index{vertex(K)}}, Vector{SVector{world_dim, REAL_}}}
+    simple ? OneTo{Id{vertex(K)}} : Vector{Id{vertex(K)}}, Vector{SVector{world_dim, REAL_}}}
   topology::fulltype(MeshTopology{K, simple})
   attributes::Dict{Any, MeshFunction}
-  cell_groups::Dict{Any, Vector{Index}}
+  cell_groups::Dict{Any, Vector} # todo: use Vector{<:Id}
   parent::PM
 
   function Mesh(parent::PM=nothing)
@@ -57,9 +57,6 @@ parent(mesh::Mesh) = mesh.parent
   subcell(K, d)
 end
 
-"type of the mesh function mapping node indices to node coordinates"
-@typeinfo nodes_type{M <: Mesh}(::Type{M}) = fieldtype(M, :nodes)
-
 "type of cells in `M` with (co)-dimension `d` as a tuple"
 @typeinfo cell_types(M::Type{<:Mesh}, d=Codim{0}()) = (Base.uniontypes(cell_type(M, d))...)
 
@@ -75,7 +72,7 @@ end
 end
 
 "Number of cells with codimension 0"
-number_of_cells(msh::Mesh) = number_of_cells(msh, Codim{0}())
+number_of_elements(msh::Mesh) = number_of_cells(msh, Codim{0}())
 
 "Number of cells of type `T` in `msh`"
 function number_of_cells(msh::Mesh, ::Union{T, Type{T}}) where T <: Cell
@@ -96,7 +93,7 @@ function dumpmesh(msh::Mesh{K}) where K <: Cell
   display(msh)
   # show all nodes
   println("  Nodes: ")
-  for (nid, coordinates) in graph(nodes(msh))
+  for (nid, coordinates) in graph(vertex_coordinates(msh))
     println("    $(nid) ↦ $(coordinates)")
   end
   println()
@@ -148,9 +145,9 @@ function add_vertex!(mesh, coords::SVector)
   @inbounds push!(mesh.nodes, coords)
 end
 
-add_vertex!(mesh, i::Index, coords::Number...) = add_vertex!(mesh, i, SVector{world_dim(mesh), real_type(mesh)}(coords))
+add_vertex!(mesh, i::Id, coords::Number...) = add_vertex!(mesh, i, SVector{world_dim(mesh), real_type(mesh)}(coords))
 
-function add_vertex!(mesh, i::Index, coords::SVector)
+function add_vertex!(mesh, i::Id, coords::SVector)
   @inbounds push!(mesh.nodes, i, coords)
 end
 
@@ -164,7 +161,7 @@ function add_vertices!{REAL_ <: Real}(mesh, vertices::AbstractArray{REAL_, 2})
   nothing
 end
 
-function add_cell!(mesh::Mesh, ::Type{K}, vertices::VID...) where {K <: Cell, VID <: Union{Index, Int}}
+function add_cell!(mesh::Mesh, ::Type{K}, vertices::VID...) where {K <: Cell, VID <: Union{Id, Int}}
   add_cell!(mesh, Connectivity{K, vertex(K)}(vertices...))
 end
 
@@ -175,16 +172,20 @@ function add_cell!{K <: Cell}(mesh::Mesh, conn::Connectivity{K})
   @inbounds push!(connectivity(mesh, dim_t(K), Dim{0}()), K, conn)
 end
 
-function add_cell!(mesh::Mesh, i::Index{K}, conn::Connectivity{K}) where {K <: Cell}
-  push!(cells(mesh, dim_t(K)), i, conn)
+function add_cell!(mesh::Mesh, i::Id{K}, conn::Connectivity{K}) where {K <: Cell}
+  push!(connectivity(mesh, dim_t(K), Dim{0}()), i, conn)
 end
 
-function cells(mesh::Mesh, ::K) where K <: Cell
-  dim(K) == 0 ? domain(nodes(mesh)) : domain(connectivity(mesh, dim_t(K), Dim{0}())[K])
+# since the dimension can not be deduced in a generated function we have to pass
+#  it explicitly as a parameter
+@generated function _cells(mesh::Mesh, i::Dim, ::K) where K <: Cell
+  i == Dim{0} ? :(domain(vertex_coordinates(mesh))) : :(domain(connectivity(mesh, dim_t(K), Dim{0}())[K]))
 end
 
-function cells(mesh::Mesh, i::Dim)
-  i == Dim{0}() ? domain(nodes(mesh)) : domain(connectivity(mesh, i, Dim{0}()))
+cells(mesh::Mesh, ::K) where K <: Cell = _cells(mesh, dim_t(K), K())
+
+@generated function cells(mesh::Mesh, i::Dim)
+  i == Dim{0} ? :(domain(vertex_coordinates(mesh))) : :(domain(connectivity(mesh, i, Dim{0}())))
 end
 
 import Base.eltype
@@ -192,13 +193,10 @@ import Base.eltype
 "Return the vertex ids of the nodes"
 vertices(mesh::Mesh) = domain(mesh.nodes)
 
-"Return the coordinates of the nodes of a mesh `mesh`"
-nodal_coordinates(mesh::Mesh) = image(mesh.nodes)
+"Return the vertex coordinates of the nodes of a mesh `mesh`"
+vertex_coordinates(mesh::Mesh) = mesh.nodes
 
-"Return the nodes of a mesh `mesh`"
-nodes(mesh::Mesh) = mesh.nodes
-
-function vertices(mesh::Mesh, cells::IdIterator{K}) where K <: Cell
+function vertices(mesh::Mesh, cells::HomogeneousIdIterator{K}) where K <: Cell
   domain(connectivity(mesh, K))[vertices(mesh)]
 end
 
@@ -206,47 +204,36 @@ end
 #  is an alternative
 geometry(mesh::Mesh) = geometry(mesh, Codim{0}())
 
-@dim_dispatch function geometry{K <: Cell}(mesh::Mesh{K}, i::Dim)
-  mapreduce(chain, decompose(connectivity(mesh, i, Dim{0}()))) do mesh_conn
-    const geo_t = Geometry{cell_type(mesh_conn), world_dim(mesh), real_type(mesh)}
-    map(graph(mesh_conn)) do idx, conn
-      geo_t(map(vidx -> nodes(mesh)[vidx], conn))
-    end
-  end
-end
+@dim_dispatch geometry{K <: Cell}(mesh::Mesh{K}, i::Dim) = geometry(mesh, cells(mesh, i))
+geometry(mesh::Mesh, ::Union{C, Type{C}}) where {C <: Cell} = geometry(mesh, cells(mesh, C))
 
-function geometry(mesh::Mesh, ::Union{C, Type{C}}) where {C <: Cell}
-  mesh_conn = connectivity(mesh, C(), Dim{0}())
-  const geo_t = Geometry{cell_type(mesh_conn), world_dim(mesh), real_type(mesh)}
-  map(graph(mesh_conn)) do idx, conn
-    geo_t(map(vidx -> nodes(mesh)[vidx], conn))
-  end
-end
-
-function geometry(mesh::M, ids::Range{Index{C}}) where {M <: Mesh, C <: Cell}
+function geometry(mesh::M, ids::HomogeneousIdIterator{C}) where {M <: Mesh, C <: Cell}
   @assert typeof(C) == DataType "Only a single cell type allowed"
-  let nodes = nodes(mesh),
-      mesh_conn = vertex_connectivity(mesh, C())
-    mesh_geo = MeshFunction(C, Geometry{C, world_dim(M), real_type(M)})
-    resize!(mesh_geo, length(ids))
-    for (i, id) in enumerate(ids)
-      mesh_geo[i] = map(vidx -> nodes[vidx], mesh_conn[id])
+  let vertex_coordinates = vertex_coordinates(mesh),
+      mesh_conn = connectivity(mesh, C(), Dim{0}())
+    mesh_geo = MeshFunction(C, Geometry{C, world_dim(M), real_type(M)}, Val{false}())
+    #resize!(mesh_geo, length(ids))
+    for id in ids
+      push!(mesh_geo, id, map(vidx -> vertex_coordinates[vidx], mesh_conn[id]))
     end
     mesh_geo
   end
 end
 
-function geometry(mesh::Mesh, id::Index{C}) where C <: Cell
+function geometry(mesh::M, ids::HeterogenousIdIterator) where M <: Mesh
+  compose(map(ids -> geometry(mesh, ids), decompose(ids)))
+end
+
+function geometry(mesh::Mesh, id::Id{C}) where C <: Cell
   nodes = nodal_coordinates(mesh)
   conn = vertex_connectivity(mesh, C())[id]
   Geometry{C, world_dim(mesh), real_type(mesh)}(map(vidx -> nodes[vidx], conn))
 end
 
 """
-Return all mesh elements, i.e. the mesh connectivity from co-dim zero cells
-to vertices
+Return the ids of all mesh elements (i.e. codim zero cells)
 """
-elements(mesh) = connectivity(mesh, Codim{0}(), Dim{0}())
+elements(mesh) = domain(connectivity(mesh, Codim{0}(), Dim{0}()))
 
 """
 Return a dictionary of all cell groups, where the key is the tag and the value
@@ -264,11 +251,25 @@ Given a predicate `pred` taking a cell geometry tag all cells for which
 `pred` return true
 """
 function tag_cells!(pred::Function, mesh::Mesh, ::Union{C, Type{C}}, tag) where C <: Cell
-  cell_group = Vector{Index}()
+  cell_group = IdIterator(C)
   foreach(decompose(geometry(mesh, C))) do mesh_geo
-    map(graph(mesh_geo)) do idx, geo
-      if pred(geo)
-        push!(cell_group, idx)
+    map(graph(mesh_geo)) do cid, geo
+      if pred(cid, geo)
+        push!(cell_group, cid)
+      end
+    end
+    cell_group
+  end
+  cell_groups(mesh)[tag] = cell_group
+end
+
+function tag_cells!(pred::Function, mesh::Mesh, cells::TypedIdIterator, tag)
+  C = cell_type(cells)
+  cell_group = IdIterator(C)
+  foreach(decompose(geometry(mesh, cells))) do mesh_geo
+    map(graph(mesh_geo)) do cid, geo
+      if pred(cid, geo)
+        push!(cell_group, cid)
       end
     end
     cell_group
@@ -280,16 +281,16 @@ end
 Given a predicate `pred` taking a cell geometry tag all cells for which
 `pred` return true
 """
-function tag_nodes(pred::Function, mesh::Mesh, node_ids::Array{Index}, tag)
-  tagged_nodes = Array{Index{vertex_type(cell_type(mesh))}}()
-  let nodes = nodes(mesh)
-    for node_id in node_ids
-      if pred(nodes[node_id])
-        push!(tagged_nodes, node_id)
+function tag_vertices(pred::Function, mesh::Mesh, vertex_ids::Array{Id}, tag)
+  tagged_vertices = Array{Id{vertex_type(cell_type(mesh))}}()
+  let vertex_coordinates = vertex_coordinates(mesh)
+    for vid in vertex_ids
+      if pred(vertex_coordinates[vid])
+        push!(tagged_nodes, vid)
       end
     end
   end
-  cell_groups(mesh)[tag] = tagged_nodes
+  cell_groups(mesh)[tag] = tagged_vertices
 end
 
 function boundary(mesh::Mesh{K, world_dim, REAL_}) where {K<:Cell, world_dim, REAL_ <: Real}
@@ -302,7 +303,7 @@ function boundary(mesh::Mesh{K, world_dim, REAL_}) where {K<:Cell, world_dim, RE
   # the number of vertices of all cells on the boundary
   N = vertex_count(facet(K))*length(boundary_cells)
   # the ids of all vertices
-  vertices = Vector{Index{vertex(K)}}(N)
+  vertices = Vector{Id{vertex(K)}}(N)
   k=1
   for cid in boundary_cells
     el_conn = el_mesh_conn[cid]
@@ -313,14 +314,45 @@ function boundary(mesh::Mesh{K, world_dim, REAL_}) where {K<:Cell, world_dim, RE
     end
   end
   # add nodes on the boundary to the boundary mesh
-  let nodes = nodes(mesh)
+  let vertex_coordinates = vertex_coordinates(mesh)
     vertex_ids = unique(vertices)
     for vid in vertex_ids
-      add_vertex!(boundary_mesh, vid, nodes[vid])
+      add_vertex!(boundary_mesh, vid, vertex_coordinates[vid])
     end
   end
   # return mesh
   boundary_mesh
+end
+
+function extract(mesh::Mesh{K, world_dim, REAL_}, cells::HomogeneousIdIterator) where {K<:Cell, world_dim, REAL_ <: Real}
+  dim(cell_type(cells)) == true || error("Not implemented")
+
+  # construct a new mesh
+  extracted_mesh = Mesh{facet(K), world_dim, REAL_, false, typeof(mesh)}(mesh)
+  # get the connectivity of all Codim{1} cells
+  el_mesh_conn = connectivity(mesh, Codim{1}(), Dim{0}())
+  # the number of vertices of all cells on the boundary
+  N = vertex_count(facet(K))*length(cells)
+  # the ids of all vertices
+  vertices = Vector{Id{vertex(K)}}(N)
+  k=1
+  for cid in cells
+    el_conn = el_mesh_conn[cid]
+    add_cell!(extracted_mesh, cid, el_conn)
+    for v in el_conn
+      vertices[k] = v
+      k+=1
+    end
+  end
+  # add nodes on the boundary to the boundary mesh
+  let vertex_coordinates = vertex_coordinates(mesh)
+    vertex_ids = unique(vertices)
+    for vid in vertex_ids
+      add_vertex!(extracted_mesh, vid, vertex_coordinates[vid])
+    end
+  end
+  # return mesh
+  extracted_mesh
 end
 
 function populate_connectivity!(msh::Mesh{Ks}) where Ks <: Cell
@@ -334,7 +366,7 @@ function populate_connectivity!(msh::Mesh{Ks}) where Ks <: Cell
   # get element facet mesh connectivity (incidence relation codim 0 -> dim 1)
   el_facet_mesh_conn = topology(msh)[Codim{0}(), Codim{1}(), true]
   # add edges in the interior to the mesh
-  potential_boundary_facet_tuples = Vector{Tuple{Index, Int, fulltype(facet_conn_t)}}()
+  potential_boundary_facet_tuples = Vector{Tuple{Id, Int, Bool, fulltype(facet_conn_t)}}()
   mesh_conn = connectivity(msh, Codim{0}(), Dim{0}())
   # todo: this gives a 5x performance degradation -> move to a seperate function
   #  this might be caused by julia #15276
@@ -342,23 +374,24 @@ function populate_connectivity!(msh::Mesh{Ks}) where Ks <: Cell
     K = cell_type(mesh_conn)
     resize!(el_facet_mesh_conn[K], number_of_cells(msh, K))
     # allocate a vector containing the facet tuples
-    facet_tuples = Vector{Tuple{Index{K}, Int, fulltype(facet_conn_t)}}()
+    facet_tuples = Vector{Tuple{Id{K}, Int, Bool, fulltype(facet_conn_t)}}()
     # first add all half facets
     for (cid, cell_conn) in graph(mesh_conn)
       for (local_index, facet_conn) in enumerate(facets(cell_conn))
-        push!(facet_tuples, (cid, local_index, canonicalize_connectivity(facet_conn)))
+        push!(facet_tuples, (cid, local_index,
+              is_cannonical(facet_conn), canonicalize_connectivity(facet_conn)))
       end
     end
     # sort the facet tuples by the the facet connectivity
-    sort!(facet_tuples, by=ft->ft[3])
+    sort!(facet_tuples, by=ft->ft[4])
     # here we store the indices in the facet tuples array of all facet tuples
     #  that potentially lie on the boundary
     potential_boundary_facet_tuple_indices = Vector{Int}()
     # now iterate over all facet tuples
-    let last_pid = Index{K}(0), # parent cell id in the last iteration
+    let last_pid = Id{K}(0), # parent cell id in the last iteration
         last_facet_conn = facet_conn_t(), # facet connectivity in the last iteration
         i=1 # current index
-      for (pid, local_index, facet_conn) in facet_tuples
+      for (pid, local_index, orientation_changed, facet_conn) in facet_tuples
         if last_facet_conn == facet_conn
           pop!(potential_boundary_facet_tuple_indices)
           push!(facets_mesh_conn, facet_conn)
@@ -379,15 +412,15 @@ function populate_connectivity!(msh::Mesh{Ks}) where Ks <: Cell
       push!(potential_boundary_facet_tuples, facet_tuples[i])
     end
   end
-  boundary_facet_ids = Vector{Index{facet(Ks)}}()
-  boundary_facet_tuples = Vector{Tuple{Index, Int, fulltype(facet_conn_t)}}()
+  boundary_facet_ids = Vector{Id{facet(Ks)}}()
+  boundary_facet_tuples = Vector{Tuple{Id, Int, Bool, fulltype(facet_conn_t)}}()
   # sort the potential boundary facet tuples by the the facet connectivity
-  sort!(potential_boundary_facet_tuples, by=ft->ft[3])
+  sort!(potential_boundary_facet_tuples, by=ft->ft[4])
   # now iterate over all potential boundary facet tuples and remove duplicates
   last_pid = nothing # parent cell id in the last iteration
   last_local_index = 0
   last_facet_conn = facet_conn_t() # facet connectivity in the last iteration
-  for (pid, local_index, facet_conn) in potential_boundary_facet_tuples
+  for (pid, local_index, orientation_changed, facet_conn) in potential_boundary_facet_tuples
     if last_facet_conn == facet_conn
       # add it to the mesh
       push!(facets_mesh_conn, facet_conn)
@@ -397,15 +430,15 @@ function populate_connectivity!(msh::Mesh{Ks}) where Ks <: Cell
       # remove it from the boundary facet tuples
       pop!(boundary_facet_tuples)
     else
-      push!(boundary_facet_tuples, (pid, local_index, facet_conn))
+      push!(boundary_facet_tuples, (pid, local_index, orientation_changed, facet_conn))
     end
     last_pid=pid
     last_local_index=local_index
     last_facet_conn=facet_conn
   end
   # now that we have found all boundary facet tuples add them to the mesh
-  for (pid, local_index, facet_conn) in boundary_facet_tuples
-    push!(facets_mesh_conn, facet_conn)
+  for (pid, local_index, orientation_changed, facet_conn) in boundary_facet_tuples
+    push!(facets_mesh_conn, orientation_changed ? flip_orientation(facet_conn) : facet_conn)
     facet_id = last(domain(facets_mesh_conn))
     el_facet_mesh_conn[pid, local_index] = facet_id
     push!(boundary_facet_ids, facet_id)
@@ -435,12 +468,12 @@ end
 #  N = mapreduce(K -> facet_count(K)*number_of_cells(msh, K), +, uniontypes(Ks))
 #  # allocate vector containing the connectivity of all facets
 #  cannonical_half_facets_conn =  # todo: preallocate
-#  potential_boundary_facets = Vector{Tuple{Index, fulltype(facet_conn_t)}}()
+#  potential_boundary_facets = Vector{Tuple{Id, fulltype(facet_conn_t)}}()
 #  # ...
 #  foreach(decompose(connectivity(msh, Codim{0}(), Dim{0}()))) do mesh_conn
 #    K = cell_type(mesh_conn)
 #    # get all half facets from the codim 0 cells of type K
-#    cannonical_half_facets_conn = Vector{Tuple{Index{K}, fulltype(facet_conn_t)}}()
+#    cannonical_half_facets_conn = Vector{Tuple{Id{K}, fulltype(facet_conn_t)}}()
 #    for (cid, cell_conn) in graph(mesh_conn)
 #      for facet_conn in facets(cell_conn)
 #        push!(cannonical_half_facets_conn, (cid, canonicalize_connectivity(facet_conn)))
@@ -448,7 +481,7 @@ end
 #    end
 #    # sort
 #    sort!(cannonical_half_facets_conn)
-#    last_pid = Index{K}(0)
+#    last_pid = Id{K}(0)
 #    last_facet_conn = facet_conn_t()
 #    for (pid, facet_conn) in cannonical_half_facets_conn
 #      # if the last facet was not a boundary facet
@@ -468,7 +501,7 @@ end
 #    end
 #  end
 #  sort!(potential_boundary_facets, by=x->x[2])
-#  boundary_facet_ids = Array{Index{facet(Ks)}, 1}()
+#  boundary_facet_ids = Array{Id{facet(Ks)}, 1}()
 #  last_facet_conn = facet_conn_t()
 #  for (pid, facet_conn) in potential_boundary_facets
 #    if facet_conn == last_facet_conn
@@ -587,7 +620,7 @@ end
 #  # remove duplicate boundary edges (occurs for edges between two elements
 #  #  of different cell type)
 #  boundary_edge_count = 0
-#  boundary_edge_ids = Array{Index{facet(K)}, 1}()
+#  boundary_edge_ids = Array{Id{facet(K)}, 1}()
 #  last_edge = edge_conn_t(-1, -1)
 #  for edge in sort(tmp_boundary_edges, by=canonicalize_connectivity)
 #    edge = canonicalize_connectivity(edge)
@@ -632,7 +665,7 @@ canonicalize_connectivity(::MethodNotImplemented) = error("Method not implemente
 
 #@generated function vertices{T <: Mesh}(mesh::T)
 #  let K = cell_type(T), vt = vertex(K)
-#    :(MeshFunction(Index{$(vt)}(1):Index{$(vt)}(length(mesh.coordinates)),
+#    :(MeshFunction(Id{$(vt)}(1):Id{$(vt)}(length(mesh.coordinates)),
 #                   (collect($(vt)(c...) for c in mesh.coordinates))))
 #  end
 #end

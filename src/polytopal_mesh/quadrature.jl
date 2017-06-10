@@ -1,5 +1,10 @@
 using TipiFEM.Quadrature: @generate_quadrature_rules
 
+@generate_quadrature_rules(Polytope"2-node line", Float64, [
+  1 => ([1], [0], 1),
+  2 => (0.5.*[1, 1], 0.5.+0.5*[-sqrt(1/3), sqrt(1/3)], 1),
+  3 => (0.5.*[5/9, 8/9, 5/9], 0.5.+0.5*[-sqrt(3/5), 0, sqrt(3/5)], 1)])
+
 @generate_quadrature_rules(Polytope"3-node triangle", Float64, [
   #1 => ([1.0], [0.66666666666666600001,0.33333333333333300000], 1./2.),
   3 => ([0.333333333333333

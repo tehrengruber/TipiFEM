@@ -61,14 +61,14 @@ macro Polytope_str(s)
 end
 
 """
-Expand an expression like `Index"1-node point"` into the corresponding
-datatype `Index{Polytope"1-node point"}`
+Expand an expression like `Id"1-node point"` into the corresponding
+datatype `Id{Polytope"1-node point"}`
 """
-macro Index_str(s) :(Index{$(macroexpand(:(@Polytope_str($(s)))))}) end
+macro Id_str(s) :(Id{$(macroexpand(:(@Polytope_str($(s)))))}) end
 
 Polytope(s::String) = Polytope{polytope_ids_transpose[s]}()
 
-#function Polytope{id}(indices::Vararg{Index"1-node point"})
+#function Polytope{id}(indices::Vararg{Id"1-node point"})
 #	Connectivity{Polytope{id},
 #							 Polytope"1-node point",
 #							 vertex_count(Polytope{id})}(indices...)

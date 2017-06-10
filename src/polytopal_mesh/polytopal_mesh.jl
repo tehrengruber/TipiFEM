@@ -3,7 +3,7 @@ module PolytopalMesh
 using TipiFEM
 using TipiFEM.Meshes
 
-export @Polytope_str, @Index_str, @Connectivity_str, integrate
+export @Polytope_str, @Id_str, @Connectivity_str, integrate
 
 @import_mesh_interface
 

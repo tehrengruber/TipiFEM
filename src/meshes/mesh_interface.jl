@@ -3,7 +3,8 @@ macro import_mesh_interface()
     import TipiFEM.Meshes: dim, coordinates, vertex_count, vertices, subcell,
                            connectivity, facet, face_count, facets, volume,
                            local_to_global, jacobian_transposed, jacobian_inverse_transposed,
-                           reference_element, integration_element, canonicalize_connectivity
+                           reference_element, integration_element, canonicalize_connectivity,
+                           flip_orientation, is_cannonical
   end
 end
 

@@ -1,6 +1,7 @@
 using TipiFEM.Utils: MethodNotImplemented
+using Base.@pure
 
-export @Polytope_str, Polytope, vertex_count, @Index_str, @Connectivity_str, vertex, Connectivity
+export @Polytope_str, Polytope, vertex_count, @Id_str, @Connectivity_str, vertex, Connectivity
 
 ################################################################################
 # data-types
@@ -11,7 +12,7 @@ abstract type Cell end
 # type-traits
 ################################################################################
 # see https://en.wikipedia.org/wiki/N-skeleton
-@Base.pure skeleton{T <: Cell}(::Type{T}) = dim(T) > 0 ? (skeleton(facet(T))..., T) : (T,)
+@pure skeleton{T <: Cell}(::Type{T}) = dim(T) > 0 ? (skeleton(facet(T))..., T) : (T,)
 @dim_dispatch @Base.pure skeleton{T <: Cell, d}(::Type{T}, ::Dim{d}) = skeleton(T)[1:d+1]
 @Base.pure function subcell{T <: Cell, cd}(::Type{T}, ::Codim{cd})
   if cd == 0 # end recursion
@@ -60,4 +61,29 @@ include("index.jl")
 include("connectivity.jl")
 include("geometry.jl")
 
-const IdIterator{K} = Union{AbstractVector{Index{K}}, Range{Index{K}}}
+################################################################################
+# cell id iterators
+################################################################################
+using TipiFEM.Utils: HeterogenousVector, HeterogenousIterator
+
+const GenericIdIterator = AbstractVector{<:Id{<:Cell}}
+
+const HomogeneousIdIterator{K <: Cell} = Union{Range{Id{K}}, AbstractVector{Id{K}}}
+
+const HeterogenousIdIterator = Union{HeterogenousVector{<:Id}, HeterogenousIterator{<:Id}}
+
+const TypedIdIterator = Union{HomogeneousIdIterator, HeterogenousIdIterator}
+
+const IdIterator = Union{GenericIdIterator, TypedIdIterator}
+
+cell_type(::Union{T, Type{T}}) where T <: Union{HomogeneousIdIterator, HeterogenousIdIterator} = cell_type(eltype(T))
+
+function IdIterator(::Union{Type{C}, C}) where C <: Cell
+  if typeof(C) == Union
+    HeterogenousVector{Tuple{uniontypes(C)...}}()
+  elseif typeof(C) == DataType
+    Vector{Id{C}}()
+  else
+    Vector{Id}()
+  end
+end

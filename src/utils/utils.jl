@@ -273,4 +273,200 @@ macro typeinfo(expr)
   esc(Expr(:block, expr, nexpr))
 end
 
+#
+# Index mapping
+#
+import Base: map, push!, values, indices
+
+mutable struct IndexMapping{I, V, II, VI}
+  indices::II
+  values::VI
+
+  function (::Type{IndexMapping{I, V}}){I, V}()
+    let II = Vector{I}, VI = Vector{V}
+      new{I, V, II, VI}(II(), VI())
+    end
+  end
+
+  (::Type{IndexMapping{I, V, II, VI}}){I, V, II, VI}(indices, values) = new{I, V, II, VI}(indices, values)
+
+  (::Type{IndexMapping{V}}){V}() = IndexMapping{Int, V}()
+end
+
+IndexMapping{II, VI}(indices::II, values::VI) = IndexMapping{eltype(II), eltype(VI), II, VI}(indices, values)
+
+indices(indmap::IndexMapping) = indmap.indices
+values(indmap::IndexMapping) = indmap.values
+
+map(f, indmap::IndexMapping) = IndexMapping(indices(indmap), map(f, values(indmap)))
+
+function push!(indmap::IndexMapping, i, v)
+  push!(indices(indmap), i)
+  push!(values(indmap), v)
+end
+
+#
+# Heterogenous vector
+#
+using ComputedFieldTypes
+
+import Base: length, size, push!, getindex, foreach, map, map!, eltype
+
+export HeterogenousVector, compose, decompose
+
+_hetarrhelper = (Ts) -> Tuple{map(T -> Vector{T}, Ts.parameters)...}
+
+@computed struct HeterogenousVector{T, Ts <: Tuple} <: AbstractArray{T, 1}
+  data::_hetarrhelper(Ts)
+end
+
+function (::Type{HeterogenousVector{Ts}}){Ts <: Tuple}(data)
+  HeterogenousVector{Union{Ts.parameters...}, Ts}(data)
+end
+
+@generated function HeterogenousVector{Ts <: Tuple}(data::Ts)
+  :(HeterogenousVector{$(Tuple{map(T -> eltype(T), Ts.types)...})}(data))
+end
+
+function (::Type{HeterogenousVector{Ts}}){Ts <: Tuple}()
+  HeterogenousVector{Union{Ts.parameters...}, Ts}(map(T -> Vector{T}(), (Ts.parameters...)))
+end
+
+"""
+Return the array that contains the elements of type `ET`
+"""
+@generated function getindex{T, Ts, Ti}(arr::HeterogenousVector{T, Ts}, ::Type{Ti})
+  i = findfirst(Ts.parameters, Ti)
+  if i==0
+    error("HeterogenousArray has no subarray with element type $(ET)")
+  end
+  :(arr.data[$(i)])
+end
+
+eltype(arr::HeterogenousVector{T}) where T = T
+size(arr::HeterogenousVector) = (length(arr),)
+length(arr::HeterogenousVector) = mapreduce(length, +, decompose(arr))
+push!{T}(arr::HeterogenousVector, v::T) = push!(arr[T], v)
+
+function getindex(arr::HeterogenousVector, j::Int)
+  offset = 0
+  i=0
+  while offset<j
+    i+=1
+    offset += length(arr.data[i])
+  end
+  arr.data[i][j-offset+length(arr.data[i])]
+end
+
+decompose(vec::Vector) = (vec,)
+
+decompose(arr::HeterogenousVector) = arr.data
+compose(arrs::Vector...) = HeterogenousVector(arrs)
+@generated function compose(arrs::Tuple)
+  expr = Expr(:call, :compose)
+  for i in 1:length(arrs.types)
+    push!(expr.args, :(arrs[$(i)]))
+  end
+  expr
+end
+
+foreach(f::Function, harr::HeterogenousVector) = foreach(arr -> foreach(f, arr), decompose(harr))
+map(f::Function, harr::HeterogenousVector) = compose(map(arr -> map(f, arr), decompose(harr)))
+map!(f::Function, harr::HeterogenousVector) = compose(map!(arr -> map(f, arr), decompose(harr)))
+
+#
+# HeterogenousIterator
+#
+import Base: length, size, eltype, start, next, done, map, mapfoldl, zip, collect
+
+# Concatenate the output of n iterators
+immutable HeterogenousIterator{T, Ts <: Tuple}
+  iters::Ts
+end
+
+@generated function (::Type{HeterogenousIterator{Ts}}){Ts <: Tuple}(data)
+  :(HeterogenousIterator{$(Union{map(T -> eltype(T), Ts.parameters)...}), Ts}(data))
+end
+
+function HeterogenousIterator{Ts <: Tuple}(data::Ts)
+  HeterogenousIterator{Ts}(data)
+end
+
+decompose(hiter::HeterogenousIterator) = hiter.iters
+
+iteratorsize{T, Ts}(::Type{HeterogenousIterator{T, Ts}}) = _het_it_is(Ts)
+
+@generated function _het_it_is{Ts}(t::Type{Ts})
+    for itype in Ts.types
+        if iteratorsize(itype) == IsInfinite()
+            return :(IsInfinite())
+        elseif iteratorsize(itype) == SizeUnknown()
+            return :(SizeUnknown())
+        end
+    end
+    return :(HasLength())
+end
+
+@generated function compose(iters...)
+  if any(T->T<:HeterogenousIterator, iters)
+    # expand inner heterogenous iterators
+    types = []
+    expr = Expr(:tuple)
+    for (i, IT) in zip(1:length(iters),iters)
+      if IT <: Chain
+        push!(types, IT.parameters[1].types...)
+        push!(expr.args, Expr(:..., :(iters[$(i)].iters)))
+      else
+        push!(types, IT)
+        push!(expr.args, :(iters[$(i)]))
+      end
+    end
+    return :(HeterogenousIterator($(expr)))
+  end
+
+  :(HeterogenousIterator(iters))
+end
+
+length(it::HeterogenousIterator{Tuple{}}) = 0
+length(it::HeterogenousIterator) = sum(length, it.iters)
+size(it::HeterogenousIterator) = (length(it),)
+
+#eltype{T}(::Type{Chain{T}}) = typejoin([eltype(t) for t in T.parameters]...)
+@Base.pure eltype{T, Ts}(::Type{HeterogenousIterator{T, Ts}}) = Union{(eltype(t) for t in Ts.types)...}
+
+function start(it::HeterogenousIterator)
+  i = 1
+  iter_state = nothing
+  while i <= length(it.iters)
+      iter_state = start(it.iters[i])
+      if !done(it.iters[i], iter_state)
+          break
+      end
+      i += 1
+  end
+  i, iter_state
+end
+
+function next(it::HeterogenousIterator, state)
+    i, iter_state = state
+    v, iter_state = next(it.iters[i], iter_state)
+    while done(it.iters[i], iter_state)
+        i += 1
+        if i > length(it.iters)
+            break
+        end
+        iter_state = start(it.iters[i])
+    end
+    return v, (i, iter_state)
+end
+
+done(it::HeterogenousIterator, state) = state[1] > length(it.iters)
+
+import Base: map, zip, collect, mapreduce, mapfoldl
+map(f, it::HeterogenousIterator) = compose(map(iter -> map(f, iter), it.iters))
+mapfoldl(f, op, it::HeterogenousIterator) = reduce(op, (mapreduce(f, op, link) for link in it.iters))
+mapfoldl(f, op, v0, it::HeterogenousIterator) = reduce(op, v0, (mapreduce(f, op, v0, link) for link in it.iters))
+zip(it1::HeterogenousIterator, it2::HeterogenousIterator) = compose(map((link1, link2) -> zip(link1, link2), it1.iters, it2.iters))
+collect(it::HeterogenousIterator) = compose(map(link -> collect(link), it.iters))
+foreach(f, it::HeterogenousIterator) = foreach(iter -> foreach(f, iter), it.iters)
 end

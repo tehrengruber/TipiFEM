@@ -44,15 +44,6 @@ function DofHandler{K <: Cell, BT <: FEBasis}(msh::Mesh{K}, basis::BT)
 end
 
 """
-Return the number of degrees of freedom / interpolation points
-"""
-function number_of_dofs(dofh::DofHandler{K}) where K <: Cell
-  mapreduce(+, flatten(type_scatter(skeleton(K)))) do C
-    number_of_cells(dofh.msh, C()) * multiplicity(dofh.basis, C())
-  end
-end
-
-"""
 Returns an integer offset for a given cell type such that the offset plus a
 cell index in integer form, associated with a degree of freedom is unique.
 """
@@ -67,7 +58,7 @@ end
 #"""
 #Given a cell associated with a degree of freedom returns a unique integer index
 #"""
-#function getindex(dofh::DofHandler, el_idx::Index{K}, ::LocalDOFIndex{idx}) where {K <: Cell, idx}
+#function getindex(dofh::DofHandler, el_idx::Id{K}, ::LocalDOFIndex{idx}) where {K <: Cell, idx}
 #  C = associated_cell_type(K, dofh.basis, idx)
 #  offset(dofh, C)+convert(Int, connectivity(dofh.msh, K, C)[el_idx][idx])
 #end
@@ -76,7 +67,7 @@ end
 Given a codim zero cell id returns unique integer indices for all
 degrees of freedom on the cell
 """
-@generated function getindex(dofh::DofHandler, el_idx::Index{K}) where K <: Cell
+@generated function getindex(dofh::DofHandler, el_idx::Id{K}) where K <: Cell
   # todo: in 3d this does not work if the faces of K with the same dimension
   #  are all of the same type
   @sanitycheck @assert dim(K) < 3 "not implemented"
@@ -103,10 +94,14 @@ degrees of freedom on the cell
     $(expr)
     # process internal degrees of freedom
     for j in 0:multiplicity(dofh.basis, K())-1
-      @inbounds result[pos] = offset(dofh, K())+el_idx+j
+      @inbounds result[pos] = offset(dofh, K())+convert(Int, el_idx)+j
     end
     result
   end
+end
+
+function getindex(dofh::DofHandler, interp_node_idx::InterpolationNodeIndex{C}) where C <: Cell
+  dofh[interp_node_idx.cid][interp_node_idx.lidx]
 end
 
 #"cell type associated with a local dof index"
