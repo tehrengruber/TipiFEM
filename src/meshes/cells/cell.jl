@@ -60,6 +60,7 @@ end
 include("index.jl")
 include("connectivity.jl")
 include("geometry.jl")
+include("generators.jl")
 
 ################################################################################
 # cell id iterators

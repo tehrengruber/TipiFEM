@@ -103,6 +103,8 @@ end
 
 const Vertex = Polytope"1-node point"
 const Edge = Polytope"2-node line"
+const Triangle = Polytope"3-node triangle"
+const Quadrilateral = Polytope"4-node quadrangle"
 
 #import Base.getindex
 #using ComputedFieldTypes

@@ -9,12 +9,14 @@ eltype(G::Base.Generator) = Base.code_typed(G.f,(eltype(G.iter),))[1].rettype
 export Meshes, PolytopalMesh
 # export types, generic functions
 export FEBasis, FESpace, interpolation_nodes, add_constraints!, mark_inactive!,
-       constraints
+       constraints, number_of_local_shape_functions, local_shape_functions,
+       grad_local_shape_functions, number_of_dofs, matrix_assembler,
+       vector_assembler, incorporate_constraints, l2_norm
 
 include("utils/utils.jl")
 include("meshes/meshes.jl")
 include("quadrature/quadrature.jl")
-include("simple_1d_mesh/simple_1d_mesh.jl")
+#include("simple_1d_mesh/simple_1d_mesh.jl")
 include("polytopal_mesh/polytopal_mesh.jl")
 include("fe/fe.jl")
 

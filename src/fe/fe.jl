@@ -4,36 +4,7 @@ include("febasis.jl")
 include("dofhandler.jl")
 include("fespace.jl")
 include("triplets.jl")
-
-# local assembler
-"""
-Assemble local element matrix
-"""
-function element_stiffness_matrix(a::Function, ::K, basis::FEBasis) where K <: Cell
-  n=number_of_local_shape_functions(basis, K())
-  el_matrix = reshape(Array{Function, 2}(n, n), Size(n, n))
-  basis_fn=local_shape_functions(basis, K())
-  for i in 1:n
-    for j in 1:n
-      #el_matrix[i, j] = a(basis_fn[i], basis_fn[j])
-      el_matrix[i, j] = a(i, j)
-    end
-  end
-  el_matrix
-end
-
-"""
-Assemble local load vector
-"""
-function element_load_vector(l::Function, ::K, basis::FEBasis) where K <: Cell
-  n=number_of_local_shape_functions(basis, K())
-  el_vec = reshape(Array{Function, 1}(n), Size(n))
-  basis_fn=local_shape_functions(basis, K())
-  for i in 1:n
-    el_vec[i] = l(i)
-  end
-  el_vec
-end
+include("norms.jl")
 
 """
 Assemble global stiffness matrix
@@ -79,12 +50,13 @@ function matrix_assembler(el_matrix::Function, trial_space::FESpace, test_space:
   end
 end
 
-function matrix_assembler(el_matrix::Function, cells::HomogeneousIdIterator{C},
+function matrix_assembler(el_matrix_assembler::Function, cells::HomogeneousIdIterator{C},
     trial_space::FESpace, test_space::FESpace; triplets=nothing) where C <: Cell
   let dofh = dofh(trial_space),
       basis_trial = basis(trial_space),
       basis_test = basis(test_space),
-      mesh = mesh(trial_space)
+      mesh = mesh(trial_space),
+      element_matrix = el_matrix_assembler(basis_trial, basis_test)
     # allocate triplets
     if triplets == nothing
       # approximate number of triplets
@@ -102,7 +74,7 @@ function matrix_assembler(el_matrix::Function, cells::HomogeneousIdIterator{C},
       @sanitycheck @assert(active_dofs(trial_space, cid) == active_dofs(test_space, cid),
         "DOFs on $(cid) that were active in the trial space where not active in the test space")
       # assemble element matrix
-      el_mat = el_matrix(cid, geo)
+      el_mat = element_matrix(cid, geo)
       @sanitycheck assert(length(el_mat) == number_of_local_shape_functions(basis_trial, cell_type(cells)())^2)
       # compute and distribute element stiffness matrix
       for i in 1:size(el_mat, 1)
@@ -117,7 +89,7 @@ function matrix_assembler(el_matrix::Function, cells::HomogeneousIdIterator{C},
   end
 end
 
-function matrix_assembler(el_matrix::Function, cells::HeterogenousIdIterator, trial_space::FESpace, test_space::FESpace)
+function matrix_assembler(el_matrix_assembler::Function, cells::HeterogenousIdIterator, trial_space::FESpace, test_space::FESpace)
   @assert dofh(trial_space).offset==dofh(test_space).offset "dofh of the trial and test space must be equal"
   @assert mesh(trial_space)==mesh(test_space) "finite element spaces must be defined on the same mesh"
   let dofh = dofh(trial_space),
@@ -132,7 +104,7 @@ function matrix_assembler(el_matrix::Function, cells::HeterogenousIdIterator, tr
     triplets = Triplets{real_type(mesh)}(N)
     # call the assembler on all homogenous id iterators
     foreach(decompose(cells)) do cells
-      matrix_assembler(el_matrix, cells, trial_space, test_space, triplets=triplets)
+      matrix_assembler(el_matrix_assembler, cells, trial_space, test_space, triplets=triplets)
     end
     triplets
   end
@@ -140,27 +112,38 @@ end
 
 "incorporate constraints into the galerkin matrix and rhs vector"
 function incorporate_constraints(fespace::FESpace, galerkin_matrix, rhs_vector)
-  for constraint in constraints(fespace)
-    for (dof, v) in zip(indices(constraint), values(constraint))
-      # set diagonal entries of constrained dofs to 1
-      #@sanitycheck @assert nnz(galerkin_matrix[dof, :]) == 0 "do not test where the solution is known (at dof: $(dof))"
-      galerkin_matrix[dof, dof] = 1
-      # modify rhs vector
-      rhs_vector[dof] = v
-    end
+  foreach(constraints(fespace)) do constraint
+    incorporate_constraints(constraint, galerkin_matrix, rhs_vector)
   end
 end
 
-function vector_assembler(el_vector::Function, fespace::FESpace)
+function incorporate_constraints(constraint::IndexMapping, galerkin_matrix, rhs_vector)
+  dof_processed = Set(Int[])
+  for (dof, v) in zip(indices(constraint), values(constraint))
+    # set diagonal entries of constrained dofs to 1
+    #@sanitycheck @assert nnz(galerkin_matrix[dof, :]) == 0 "do not test where the solution is known (at dof: $(dof))"
+    if !(dof ∈ dof_processed)
+      push!(galerkin_matrix, dof, dof, 1.)
+    end
+    push!(dof_processed, dof)
+    #galerkin_matrix[dof, dof] = 1
+    # modify rhs vector
+    rhs_vector[dof] = v
+  end
+end
+
+function vector_assembler(element_vector_assembler::Function, fespace::FESpace)
   let dofh = dofh(fespace),
       mesh = mesh(fespace),
       basis = basis(fespace),
-      mesh_geo = geometry(mesh)
+      mesh_geo = geometry(mesh, active_cells(fespace))
     N = number_of_dofs(fespace)
     V = zeros(real_type(mesh), N)
     k = 1
-    map(cell_types(mesh)) do K
+    foreach(decompose(mesh_geo)) do mesh_geo
+      K = cell_type(mesh_geo)
       n = number_of_local_shape_functions(basis, K())
+      el_vector = element_vector_assembler(basis)
       for (cid, geo) in graph(mesh_geo[K])
         # get degrees of freedom for the current element
         dofs = dofh[cid]
@@ -168,7 +151,7 @@ function vector_assembler(el_vector::Function, fespace::FESpace)
         el_vec = el_vector(cid, geo)
         # distribute local/element load vector
         for i in 1:n
-            V[dofs[i]] += el_vec[i]
+          V[dofs[i]] += el_vec[i]
         end
       end
     end

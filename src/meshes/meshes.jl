@@ -11,10 +11,9 @@ export Mesh, add_vertex!, add_cell!, Id, LocalDOFIndex, world_dim, mesh_dim, mes
        IdIterator, HomogeneousIdIterator,HeterogenousIdIterator, GenericIdIterator,
        issimple, parent_type, hasparent, world_dim, cell_type,
        set_domain!, set_image!, tag_cells!, number_of_elements, Cell, is_cannonical,
-       canonicalize_connectivity, flip_orientation
+       canonicalize_connectivity, flip_orientation, element_type, normal
 
 using StaticArrays
-using Iterators
 using ComputedFieldTypes
 
 import Base.push!
@@ -39,7 +38,7 @@ using TipiFEM.Utils.MethodNotImplemented
 for method in [:reference_element, :facets, :volume, :jacobian_transposed,
                :jacobian_inverse_transposed, :local_to_global,
                :point, :integration_element, :is_cannonical,
-               :canonicalize_connectivity, :flip_orientation]
+               :canonicalize_connectivity, :flip_orientation, :normal]
   @eval $(method)(::MethodNotImplemented) = error("Method not implemented")
 end
 

@@ -14,7 +14,7 @@ For cell_type(M) beeing Polytope"3-node triangle" this is the following function
   { v ∈ C^k(X) : v_{|C} \in {\cal P}(C) \forall C \in {\cal M} }
 \]
 """
-@computed struct FESpace{B <: FEBasis, M <: Mesh, D <: DofHandler, ID_ITER <: IdIterator}
+@computed type FESpace{B <: FEBasis, M <: Mesh, D <: DofHandler, ID_ITER <: IdIterator}
   # specification of the basis functions
   basis::B
 
@@ -35,7 +35,7 @@ For cell_type(M) beeing Polytope"3-node triangle" this is the following function
 
   # inactive interpolation nodes / inactive degrees of freedom
   active_cells_mask::first(return_types(MeshFunction,
-    (Type{Union{skeleton(cell_type(M))...}}, Type{Bool})))
+    (Type{Union{skeleton(element_type(M))...}}, Type{Bool})))
 end
 
 #
@@ -44,7 +44,7 @@ end
 "construct a finite element space"
 function FESpace{B <: FEBasis, M <: Mesh}(basis::B, mesh::M)
   # construct active cell mask
-  active_cells_mask = MeshFunction(Union{skeleton(cell_type(M))...}, Bool)
+  active_cells_mask = MeshFunction(Union{skeleton(element_type(M))...}, Bool)
   # construct dof handler
   d = DofHandler(mesh, basis)
   # all cells of the mesh are active
@@ -53,7 +53,7 @@ function FESpace{B <: FEBasis, M <: Mesh}(basis::B, mesh::M)
   fespace = FESpace{B, M, typeof(d), typeof(active_cells)}(basis, mesh, d,
     Vector{IndexMapping}(), active_cells, active_cells_mask)
   # mark all cells active
-  Ks = cell_type(mesh)
+  Ks = element_type(mesh)
   for Cs in skeleton(Ks)
     for C in uniontypes(Cs)
       let cells = cells(mesh, C())
@@ -67,13 +67,14 @@ end
 
 "construct a finite element space"
 function FESpace{B <: FEBasis, M <: Mesh, ID_ITER <: IdIterator}(basis::B, mesh::M, active_cells::ID_ITER)
-  active_cells_mask = MeshFunction(Union{skeleton(cell_type(M))...}, Bool,
-   Val{issimple(hasparent(M) ? parent_type(M) : M)}())
+  active_cells_mask = MeshFunction(Union{skeleton(element_type(M))...}, Bool)
+  # construct dof handler
+  d = DofHandler(mesh, basis)
   # construct fespace
-  fespace = FESpace{B, M, D, ID_ITER}(basis, mesh, DofHandler(mesh, basis),
-    fieldtype(fulltype(FESpace{B, M, D}), :constraints)(), active_cells, active_cells_mask)
+  fespace = FESpace{B, M, typeof(d), ID_ITER}(basis, mesh, DofHandler(mesh, basis),
+    Vector{IndexMapping}(), active_cells, active_cells_mask)
   # first mark all mesh cells inactive
-  Ks = cell_type(mesh)
+  Ks = element_type(mesh)
   for Cs in skeleton(Ks)
     for C in uniontypes(Cs)
       let cells = cells(mesh, C())
@@ -83,13 +84,7 @@ function FESpace{B <: FEBasis, M <: Mesh, ID_ITER <: IdIterator}(basis::B, mesh:
     end
   end
   # then mark all active cells active
-  for Cs in skeleton(Ks)
-    for C in uniontypes(Cs)
-      foreach(active_cells) do cid
-        active_cells_mask[C][cid] = true
-      end
-    end
-  end
+  mark_active!(fespace, active_cells)
   fespace
 end
 
@@ -118,12 +113,23 @@ basis(::Type{T}) where T <: FESpace = tparam(T, 1)()
 "get dofhandler of the finite element space"
 dofh(fespace::FESpace) = fespace.dofh
 
+#import Base.intersect
+#
+#function intersect(fespace1::FESpace, fespace2::FESpace)
+#  assert(basis(fespace1) == basis(fespace2))
+#  assert(mesh(fespace1) == mesh(fespace2))
+#  result = FESpace(basis(fespace1), mesh(fespace1), active_cells(fespace1))
+#  result.constraints = vcat(fespace1.constraints, fespace2.constraints)
+#  result.active_cells_mask = fespace1.active_cells_mask .& fespace2.active_cells_mask
+#  result
+#end
+
 #
 # functionality
 #
 "return the number of degrees of freedom"
 function number_of_dofs(fespace::FESpace)
-  let mesh = mesh(fespace), basis=basis(fespace), K = cell_type(mesh)
+  let mesh = mesh(fespace), basis=basis(fespace), K = element_type(mesh)
     mapreduce(+, flatten(type_scatter(skeleton(K)))) do C
       number_of_cells(mesh, C()) * multiplicity(basis, C())
     end
@@ -144,6 +150,52 @@ function add_constraints!(fespace::FESpace, interp_indmap::IndexMapping{Interpol
     indmap
   end
 end
+
+#@generated interpolation_nodes{C <: Cell}(fespace::FESpace, ::Type{C}; result=[]) = quote
+#  let mesh = mesh(fespace),
+#      dofh = dofh(fespace),
+#      basis = basis(fespace),
+#      interpolation_nodes = $(interpolation_nodes(basis(fespace), C())),
+#      local_indices = map(local_index, interpolation_nodes)
+#      local_coordinates = map(coordinates, interpolation_nodes)
+#    for (cid, geo) in graph(geometry(mesh, C()))
+#      for (lidx, local_coordinate) in zip(local_indices, local_coordinates)
+#        interp_node_index = InterpolationNodeIndex(cid, lidx)
+#        interp_node = InterpolationNode(interp_node_index, local_to_global(geo, local_coordinate))
+#        push!(result, interp_node)
+#      end
+#    end
+#  end
+#  result
+#end
+
+#@generated function interpolation_nodes(fespace::FESpace)
+#  # get all interpolation nodes in the interior of codimension zero cells
+#  expr = Expr(:block)
+#  for K in uniontypes(element_type(tparam(fespace, 2)))
+#    internal_interpolation_nodes = map(interpolation_node, internal_dofs(basis(fespace), K()))
+#    push!(expr.args, quote
+#      local_indices = $(map(local_index, internal_interpolation_nodes))
+#      local_coordinates = $(map(coordinates, internal_interpolation_nodes))
+#      for (cid, geo) in graph(geometry(mesh(fespace), $(K)))
+#        for (lidx, local_coordinate) in zip(local_indices, local_coordinates)
+#          interp_node_index = InterpolationNodeIndex(cid, lidx)
+#          interp_node = InterpolationNode(interp_node_index, local_to_global(geo, local_coordinate))
+#          push!(result, interp_node)
+#        end
+#      end
+#    end)
+#  end
+#  quote
+#    result = []
+#    # get all interpolation nodes on the facets of codimension zero cells
+#    interpolation_nodes(fespace, facet(element_type(mesh(fespace))), result=result)
+#
+#    $(expr)
+#
+#    result
+#  end
+#end
 
 "get all interpolation nodes on the cells `cells`"
 function interpolation_nodes(fespace::FESpace, cells::IdIterator)
@@ -172,7 +224,7 @@ function interpolation_nodes(fespace::FESpace, cells::IdIterator)
   end
 end
 
-"get all interpolation nodes of the finite element space"
+#"get all interpolation nodes of the finite element space"
 interpolation_nodes(fespace::FESpace) = interpolation_nodes(fespace, fespace.active_cells)
 
 """
@@ -202,7 +254,8 @@ local interpolation node is active
   # now process all boundary degrees of freedom
   for d in 0:dim(K)-1
     # get all boundary dofs attached to cells of dimension d
-    let boundary_dofs = filter(boundary_dofs(basis(fespace), K())) do dof
+    let boundary_dofs = Base.Iterators.filter(
+        boundary_dofs(basis(fespace), K())) do dof
         dim(attached_cell(dof)) == d
       end
       # get the indices of the boundary dofs
@@ -289,12 +342,14 @@ end
 #  end
 #end
 
-"Mark all cells with ids in `ids` and their faces inactive"
-function mark_inactive!(fespace::FESpace, ids::HomogeneousIdIterator{K}) where K <: Cell
+mark_active!(fespace::FESpace, ids::IdIterator) = mark!(fespace, ids; state=true)
+
+"Mark all cells with ids in `ids` and their faces either active or inactive"
+function mark!(fespace::FESpace, ids::HomogeneousIdIterator{K}; state=false) where K <: Cell
   # first mark all cells with id in `ids` inactive
   let active_cells_mask = active_cells_mask(fespace)[K]
     for id in ids
-      active_cells_mask[id] = false
+      active_cells_mask[id] = state
     end
   end
   # now mark all faces of cells with id in `ids` inactive
@@ -309,14 +364,16 @@ function mark_inactive!(fespace::FESpace, ids::HomogeneousIdIterator{K}) where K
         # iterate over all cells incident to the inactive cells
         for sid in conn[id]
           # mark the incident cell as inactive
-          active_cells_mask_constrained[sid] = false
+          active_cells_mask_constrained[sid] = state
         end
       end
     end
   end
 end
 
-mark_inactive!(fespace::FESpace, ids::HeterogenousIdIterator) = foreach(mark_inactive!, decompose(ids))
+mark!(fespace::FESpace, ids::HeterogenousIdIterator; state=false) = foreach(ids -> mark!(fespace, ids, state=state), decompose(ids))
+
+mark_inactive!(fespace::FESpace, ids::IdIterator) = mark!(fespace, ids, state=false)
 
 function interpolate(f::Function , fespace::FESpace)
   f_int = map(f, geometry(mesh(fespace), dofs))

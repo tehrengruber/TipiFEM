@@ -3,6 +3,8 @@ export facets
 
 using TipiFEM.Utils: @generate_sisd
 
+import TipiFEM.Meshes.normal
+
 "Geometry of the reference triangle"
 function reference_element(::Polytope"3-node triangle")
   Geometry{Polytope"3-node triangle", 2, Float64}((0, 0), (1, 0), (0, 1))
@@ -23,20 +25,20 @@ end
 #
 #facets(::Polytope"4-node quadrangle") = (Edge, (1, 2), (2, 3), (3, 4), (4, 1))
 
-"Geometry of the facets of a triangle"
-function facets{G <: Geometry{Polytope"3-node triangle"}}(geo::G)
-  (Geometry{Edge, world_dim(G), real_type(G)}(point(geo, 1), point(geo, 2)),
-   Geometry{Edge, world_dim(G), real_type(G)}(point(geo, 2), point(geo, 3)),
-   Geometry{Edge, world_dim(G), real_type(G)}(point(geo, 3), point(geo, 1)))
-end
-
-"Geometry of the facets of a quadrangle"
-function facets{G <: Geometry{Polytope"4-node quadrangle"}}(geo::G)
-  (Geometry{Edge, world_dim(G), real_type(G)}(point(geo, 1), point(geo, 2)),
-   Geometry{Edge, world_dim(G), real_type(G)}(point(geo, 2), point(geo, 3)),
-   Geometry{Edge, world_dim(G), real_type(G)}(point(geo, 3), point(geo, 4)),
-   Geometry{Edge, world_dim(G), real_type(G)}(point(geo, 4), point(geo, 1)))
-end
+#"Geometry of the facets of a triangle"
+#function facets{G <: Geometry{Polytope"3-node triangle"}}(geo::G)
+#  (Geometry{Edge, world_dim(G), real_type(G)}(point(geo, 1), point(geo, 2)),
+#   Geometry{Edge, world_dim(G), real_type(G)}(point(geo, 2), point(geo, 3)),
+#   Geometry{Edge, world_dim(G), real_type(G)}(point(geo, 3), point(geo, 1)))
+#end
+#
+#"Geometry of the facets of a quadrangle"
+#function facets{G <: Geometry{Polytope"4-node quadrangle"}}(geo::G)
+#  (Geometry{Edge, world_dim(G), real_type(G)}(point(geo, 1), point(geo, 2)),
+#   Geometry{Edge, world_dim(G), real_type(G)}(point(geo, 2), point(geo, 3)),
+#   Geometry{Edge, world_dim(G), real_type(G)}(point(geo, 3), point(geo, 4)),
+#   Geometry{Edge, world_dim(G), real_type(G)}(point(geo, 4), point(geo, 1)))
+#end
 
 function find_longest_edge(geo::G) where G <: Geometry{Polytope"3-node triangle"}
   edges = facets(geo)
@@ -161,17 +163,17 @@ on the reference element map them to coordinates on `G`.
 end
 
 function local_to_global(geo::Geometry{C, world_dim}, x̂::SVector{local_dim, T}) where {C <: Polytope, world_dim, local_dim, T<:Real}
-  local_to_global(geo, SMatrix{1, local_dim, T}(x̂))
+  convert(SVector{world_dim, T}, local_to_global(geo, SMatrix{1, local_dim, T}(x̂)))
 end
 
 function local_to_global(geo::Geometry{Polytope"2-node line", world_dim},
     x̂s::SVector{n, T}) where {world_dim, n, T<:Real}
-  local_to_global(geo, SMatrix{n, 1, T}(x̂s))
+  convert(SVector{world_dim, T},  local_to_global(geo, SMatrix{n, 1, T}(x̂s)))
 end
 
 function local_to_global(geo::Geometry{Polytope"2-node line", world_dim},
-    x̂s::T) where {world_dim, T<:Real}
-  local_to_global(geo, SMatrix{1, 1, T}(x̂s))'
+    x̂::T) where {world_dim, T<:Real}
+  local_to_global(geo, SMatrix{1, 1, T}(x̂))'
 end
 
 #function local_to_global{G <: Geometry{Polytope"3-node triangle"}, REAL_ <: Real}(geo::G, x::SVector{2, REAL_})

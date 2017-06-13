@@ -1,4 +1,3 @@
-using Iterators
 using StaticArrays
 using SimpleRepeatIterator
 using TipiFEM.Utils: type_scatter, flatten
@@ -53,8 +52,12 @@ parent(mesh::Mesh) = mesh.parent
 @typeinfo world_dim(M::Type{<:Mesh}) = tparam(M, 2)
 
 "type of cells in `M` with (co)-dimension `d`"
-@typeinfo cell_type(M::Type{<:Mesh}, d=Codim{0}()) = let K = tparam(M, 1)
+@typeinfo cell_type(M::Type{<:Mesh}, d) = let K = tparam(M, 1)
   subcell(K, d)
+end
+
+@typeinfo element_type(M::Type{<:Mesh}) = let K = tparam(M, 1)
+  K
 end
 
 "type of cells in `M` with (co)-dimension `d` as a tuple"
@@ -63,7 +66,7 @@ end
 "Number of `d` dimensional cells in `msh`"
 @dim_dispatch function number_of_cells{K}(msh::Mesh{K}, d::Codim)
   # if the number of vertices is requested we have to look at the nodes arrays
-  if complement(cell_type(msh), d)==Dim{0}()
+  if complement(element_type(msh), d)==Dim{0}()
     length(msh.nodes)
   # otherwise the number of cells is stored in the topology array
   else
@@ -108,7 +111,7 @@ function dumpmesh(msh::Mesh{K}) where K <: Cell
 end
 
 "dimension of codimension zero cells"
-@typeinfo mesh_dim(M::Type{<:Mesh}) = dim(cell_type(M))
+@typeinfo mesh_dim(M::Type{<:Mesh}) = dim(element_type(M))
 
 "type used for calculations with real numbers"
 @typeinfo real_type(M::Type{<:Mesh}) = tparam(M, 3)
@@ -166,9 +169,9 @@ function add_cell!(mesh::Mesh, ::Type{K}, vertices::VID...) where {K <: Cell, VI
 end
 
 function add_cell!{K <: Cell}(mesh::Mesh, conn::Connectivity{K})
-  @assert(K ∈ flatten(type_scatter(skeleton(cell_type(mesh)))),
-          """Can not add a cell of type $(K) into a mesh with element type $(cell_type(msh))
-          admissable cell types: $(flatten(type_scatter(skeleton(cell_type(msh)))))""")
+  @assert(K ∈ flatten(type_scatter(skeleton(element_type(mesh)))),
+          """Can not add a cell of type $(K) into a mesh with element type $(element_type(msh))
+          admissable cell types: $(flatten(type_scatter(skeleton(element_type(msh)))))""")
   @inbounds push!(connectivity(mesh, dim_t(K), Dim{0}()), K, conn)
 end
 
@@ -204,9 +207,19 @@ end
 #  is an alternative
 geometry(mesh::Mesh) = geometry(mesh, Codim{0}())
 
+"""
+Return geometry of all `i`-dimensional cells
+"""
 @dim_dispatch geometry{K <: Cell}(mesh::Mesh{K}, i::Dim) = geometry(mesh, cells(mesh, i))
-geometry(mesh::Mesh, ::Union{C, Type{C}}) where {C <: Cell} = geometry(mesh, cells(mesh, C))
 
+"""
+Return geometry of all cells with type `C`
+"""
+geometry(mesh::Mesh, ::Union{C, Type{C}}) where {C <: Cell} = geometry(mesh, cells(mesh, C()))
+
+"""
+Return geometry of all cells with ids in `ids`
+"""
 function geometry(mesh::M, ids::HomogeneousIdIterator{C}) where {M <: Mesh, C <: Cell}
   @assert typeof(C) == DataType "Only a single cell type allowed"
   let vertex_coordinates = vertex_coordinates(mesh),
@@ -220,10 +233,16 @@ function geometry(mesh::M, ids::HomogeneousIdIterator{C}) where {M <: Mesh, C <:
   end
 end
 
+"""
+Return geometry of all cells with ids in `ids`
+"""
 function geometry(mesh::M, ids::HeterogenousIdIterator) where M <: Mesh
   compose(map(ids -> geometry(mesh, ids), decompose(ids)))
 end
 
+"""
+Return geometry of the cell with id `id`
+"""
 function geometry(mesh::Mesh, id::Id{C}) where C <: Cell
   nodes = nodal_coordinates(mesh)
   conn = vertex_connectivity(mesh, C())[id]
@@ -248,7 +267,7 @@ tagged_cells(mesh::Mesh, tag) = cell_groups(mesh)[tag]
 
 """
 Given a predicate `pred` taking a cell geometry tag all cells for which
-`pred` return true
+`pred` returns true with `tag`
 """
 function tag_cells!(pred::Function, mesh::Mesh, ::Union{C, Type{C}}, tag) where C <: Cell
   cell_group = IdIterator(C)
@@ -282,7 +301,7 @@ Given a predicate `pred` taking a cell geometry tag all cells for which
 `pred` return true
 """
 function tag_vertices(pred::Function, mesh::Mesh, vertex_ids::Array{Id}, tag)
-  tagged_vertices = Array{Id{vertex_type(cell_type(mesh))}}()
+  tagged_vertices = Array{Id{vertex_type(element_type(mesh))}}()
   let vertex_coordinates = vertex_coordinates(mesh)
     for vid in vertex_ids
       if pred(vertex_coordinates[vid])
@@ -293,6 +312,9 @@ function tag_vertices(pred::Function, mesh::Mesh, vertex_ids::Array{Id}, tag)
   cell_groups(mesh)[tag] = tagged_vertices
 end
 
+"""
+Extract mesh that contains only the cells on the boundary
+"""
 function boundary(mesh::Mesh{K, world_dim, REAL_}) where {K<:Cell, world_dim, REAL_ <: Real}
   # construct a new mesh
   boundary_mesh = Mesh{facet(K), world_dim, REAL_, false, typeof(mesh)}(mesh)
@@ -390,6 +412,7 @@ function populate_connectivity!(msh::Mesh{Ks}) where Ks <: Cell
     # now iterate over all facet tuples
     let last_pid = Id{K}(0), # parent cell id in the last iteration
         last_facet_conn = facet_conn_t(), # facet connectivity in the last iteration
+        last_local_index = 0,
         i=1 # current index
       for (pid, local_index, orientation_changed, facet_conn) in facet_tuples
         if last_facet_conn == facet_conn
@@ -397,6 +420,7 @@ function populate_connectivity!(msh::Mesh{Ks}) where Ks <: Cell
           push!(facets_mesh_conn, facet_conn)
           facet_id = last(domain(facets_mesh_conn))
           el_facet_mesh_conn[pid, local_index] = facet_id
+          el_facet_mesh_conn[last_pid, last_local_index] = facet_id
         else
           push!(potential_boundary_facet_tuple_indices, i)
         end
@@ -404,6 +428,7 @@ function populate_connectivity!(msh::Mesh{Ks}) where Ks <: Cell
         #  iteration
         i+=1
         last_pid=pid
+        last_local_index=local_index
         last_facet_conn=facet_conn
       end
     end
@@ -471,7 +496,7 @@ end
 #  potential_boundary_facets = Vector{Tuple{Id, fulltype(facet_conn_t)}}()
 #  # ...
 #  foreach(decompose(connectivity(msh, Codim{0}(), Dim{0}()))) do mesh_conn
-#    K = cell_type(mesh_conn)
+#    K = element_type(mesh_conn)
 #    # get all half facets from the codim 0 cells of type K
 #    cannonical_half_facets_conn = Vector{Tuple{Id{K}, fulltype(facet_conn_t)}}()
 #    for (cid, cell_conn) in graph(mesh_conn)

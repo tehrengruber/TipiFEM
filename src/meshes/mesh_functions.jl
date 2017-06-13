@@ -240,6 +240,11 @@ setindex!(mf::HomogenousMeshFunction, v, i::Int) = image(mf)[i] = v
 setindex!(mf::HomogenousMeshFunction, v, i::Id) = mf[_get_idx(mf, i)] = v
 setindex!(mf::HomogenousMeshFunction, v, i::Id, j::Int) = mf[_get_idx(mf, i), j] = v
 
+#function &(mf1::HomogenousMeshFunction, mf2::HomogenousMeshFunction)
+#  assert(domain(mf1) == domain(m2))
+#  HomogenousMeshFunction(domain(mf1), image(mf1) & image(mf2))
+#end
+
 "Set the `j`-th element of `mf[i]` to to `v`"
 function setindex!(mf::HomogenousMeshFunction{K, V}, v, i::Int, j::Int) where {K<:Cell, V<:AbstractArray}
   @boundscheck begin
@@ -497,6 +502,11 @@ end
   end
   :(HeterogenousMeshFunction{$(Ks), $(Vs)}($(mfs_expr)))
 end
+
+#function &(mf1::HeterogenousMeshFunction, mf2::HeterogenousMeshFunction)
+#  assert(domain(mf1) == domain(m2))
+#  HeterogenousMeshFunction((hmf1 & hmf2 for (hmf1, hmf2) in zip(decompose(mf1), decompose(mf2)))...)
+#end
 
 #using Iterators.link_types
 #
