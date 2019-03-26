@@ -6,7 +6,7 @@ mutable struct Triplets{T <: Real}
   V::Vector{T}
   length::Int
 
-  Triplets{T}(N::Int) where T <: Real = new{T}(Vector{Int}(N), Vector{Int}(N), Vector{T}(N), 0)
+  Triplets{T}(N::Int) where T <: Real = new{T}(Vector{Int}(undef, N), Vector{Int}(undef, N), Vector{T}(undef, N), 0)
 end
 
 function push!(triplets::Triplets{T}, i::Int, j::Int, v::T) where T <: Real
@@ -25,12 +25,13 @@ end
 
 length(triplets::Triplets) = triplets.length
 
+import SparseArrays: sparse
 function convert(SparseMatrixCSC, triplets::Triplets)
   l=length(triplets)
   sparse(triplets.I[1:l], triplets.J[1:l], triplets.V[1:l])
 end
 
-import Base.sparse
+import SparseArrays: sparse
 function sparse(triplets::Triplets, m::Int, n::Int)
   l=length(triplets)
   sparse(view(triplets.I, 1:l), view(triplets.J, 1:l), view(triplets.V, 1:l), m, n)

@@ -1,12 +1,12 @@
-import Base: eltype, length, indices, getindex, append!, push!,
+import Base: eltype, length, getindex, append!, push!,
               sort, getindex, setindex!, size, map, zip, eltype, iteratorsize,
               iteratoreltype, empty!, iterate
 
-export domain, image, graph, idxtype, cell_type, reserve
+export domain, image, graph, idxtype, cell_type, reserve, indices
 
 using StaticArrays
 using Base: OneTo
-import TipiFEM.Utils: compose, decompose, flatten
+import TipiFEM.Utils: compose, decompose, flatten, indices
 # note if the mesh function needs to communicate with the mesh we should
 #  do this by means of events
 # todo: ensure that the indices are sorted
@@ -85,7 +85,7 @@ graph(mf::MeshFunction) = GraphIterator(domain(mf), image(mf))
 
 eltype(mf::MeshFunction) = eltype(image(mf))
 length(mf::MeshFunction) = length(image(mf))
-iterate(mf::MeshFunction) = iterate(image(mf))
+iterate(mf::MeshFunction, state) = iterate(image(mf), state)
 
 getindex(mf::MeshFunction, i::Id) = throw(MethodNotImplemented())
 getindex(mf::MeshFunction, i::Id, j::Int) = mf[i][j]

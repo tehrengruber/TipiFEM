@@ -32,7 +32,7 @@ function DofHandler(msh::Mesh{K}, basis::BT) where {K <: Cell, BT <: FEBasis}
   # todo: assert initialized mesh
   # precompute offsets
   sizes = map(C -> number_of_cells(msh, C()) * multiplicity(basis, C()), flatten(type_scatter(skeleton(K))))
-  offsets = Array{Int, 1}(length(sizes))
+  offsets = Array{Int, 1}(undef, length(sizes))
   let offset = 0
     for i in 1:length(offsets)
       offsets[i] = offset
@@ -48,7 +48,7 @@ Returns an integer offset for a given cell type such that the offset plus a
 cell index in integer form, associated with a degree of freedom is unique.
 """
 @generated function offset(dof_handler::DofHandler{K}, ::C) where {K <: Cell, C <: Cell}
-  i = findfirst(flatten(type_scatter(skeleton(K))), C)
+  i = findfirst(isequal(C), flatten(type_scatter(skeleton(K))))
   i::Int # otherwise this method is not type stable...
   i != 0 || error("attempt get offset for a cell type which is not "
         * "contained in the skeleton of any codim zero cell")

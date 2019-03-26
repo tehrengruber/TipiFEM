@@ -75,7 +75,7 @@ function matrix_assembler(el_matrix_assembler::Function, cells::HomogeneousIdIte
         "DOFs on $(cid) that were active in the trial space where not active in the test space")
       # assemble element matrix
       el_mat = element_matrix(cid, geo)
-      @sanitycheck assert(length(el_mat) == number_of_local_shape_functions(basis_trial, cell_type(cells)())^2)
+      @sanitycheck @assert length(el_mat) == number_of_local_shape_functions(basis_trial, cell_type(cells)())^2
       # compute and distribute element stiffness matrix
       for i in 1:size(el_mat, 1)
         for j in 1:size(el_mat, 2)

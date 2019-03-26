@@ -58,7 +58,7 @@ function FESpace(basis::B, mesh::M) where {B <: FEBasis, M <: Mesh}
     for C in uniontypes(Cs)
       let cells = cells(mesh, C())
         set_domain!(active_cells_mask[C], cells)
-        set_image!(active_cells_mask[C], fill!(Vector{Bool}(length(cells)), true))
+        set_image!(active_cells_mask[C], fill!(Vector{Bool}(undef, length(cells)), true))
       end
     end
   end
@@ -79,7 +79,7 @@ function FESpace(basis::B, mesh::M, active_cells::ID_ITER) where {B <: FEBasis, 
     for C in uniontypes(Cs)
       let cells = cells(mesh, C())
         set_domain!(active_cells_mask[C], cells)
-        set_image!(active_cells_mask[C], fill!(Vector{Bool}(length(cells)), false))
+        set_image!(active_cells_mask[C], fill!(Vector{Bool}(undef, length(cells)), false))
       end
     end
   end

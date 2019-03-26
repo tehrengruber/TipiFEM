@@ -42,7 +42,7 @@ end
 end
 
 @generated function getindex(list::QuadruleList{Cs}, ::Type{C}) where {Cs, C <: Cell}
-  i = findfirst(Cs.parameters, C)
+  i = findfirst(isequal(C), Cs.parameters)
   i != 0 || error("No quadrule for cell type $(C) in list")
   :(list.quadrules[$(i)])
 end

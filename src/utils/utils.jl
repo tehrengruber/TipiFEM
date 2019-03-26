@@ -1,6 +1,7 @@
 module Utils
 
 import Base.Iterators.flatten
+import Base: iterate
 
 using MacroTools
 using MacroTools: postwalk, prewalk
@@ -278,21 +279,23 @@ end
 #
 # Index mapping
 #
-import Base: map, push!, values, indices
+import Base: map, push!, values
 
 mutable struct IndexMapping{I, V, II, VI}
   indices::II
   values::VI
 
-  function IndexMapping() where {I, V}
+  function (::Type{IndexMapping{I, V}})() where {I, V}
     let II = Vector{I}, VI = Vector{V}
       new{I, V, II, VI}(II(), VI())
     end
   end
 
-  IndexMapping(indices, values) where {I, V, II, VI} = new{I, V, II, VI}(indices, values)
+  function (::Type{IndexMapping{I, V, II, VI}})(indices, values) where {I, V, II, VI}
+    new{I, V, II, VI}(indices, values)
+  end
 
-  IndexMapping() where {V} = IndexMapping{Int, V}()
+  (::Type{IndexMapping{V}})() where {V} = IndexMapping{Int, V}()
 end
 
 IndexMapping(indices::II, values::VI) where {II, VI} = IndexMapping{eltype(II), eltype(VI), II, VI}(indices, values)
@@ -436,33 +439,35 @@ size(it::HeterogenousIterator) = (length(it),)
 #eltype{T}(::Type{Chain{T}}) = typejoin([eltype(t) for t in T.parameters]...)
 @Base.pure eltype(::Type{HeterogenousIterator{T, Ts}}) where {T, Ts} = Union{(eltype(t) for t in Ts.types)...}
 
-function start(it::HeterogenousIterator)
-  i = 1
-  iter_state = nothing
-  while i <= length(it.iters)
-      iter_state = start(it.iters[i])
-      if !done(it.iters[i], iter_state)
-          break
+function iterate(it::HeterogenousIterator)
+  for i in 1:length(it.iters)
+      val, it_state = iterate(it.iters[i])
+      if it_state != nothing
+        return (val, (i, it_state))
       end
-      i += 1
   end
-  i, iter_state
+  nothing
 end
 
-function next(it::HeterogenousIterator, state)
-    i, iter_state = state
-    v, iter_state = next(it.iters[i], iter_state)
-    while done(it.iters[i], iter_state)
-        i += 1
-        if i > length(it.iters)
-            break
-        end
-        iter_state = start(it.iters[i])
+function iterate(it::HeterogenousIterator, state)
+  i0, it_state = state
+  # check if there are elements left in the current (sub)iterator
+  let it_result = iterate(it.iters[i0], it_state)
+    if it_result != nothing
+      val, it_state = it_result
+      return (val, (i0, it_state))
     end
-    return v, (i, iter_state)
+  end
+  # check remaining (sub)iterators
+  for i in i0+1:length(it.iters)
+      it_result = iterate(it.iters[i])
+      if it_result != nothing
+        val, it_state = it_result
+        return (val, (i, it_state))
+      end
+  end
+  nothing
 end
-
-done(it::HeterogenousIterator, state) = state[1] > length(it.iters)
 
 import Base: map, zip, collect, mapreduce, mapfoldl
 map(f, it::HeterogenousIterator) = compose(map(iter -> map(f, iter), it.iters))
