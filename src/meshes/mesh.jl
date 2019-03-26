@@ -226,7 +226,7 @@ geometry(mesh::Mesh, ::Union{C, Type{C}}) where C <: Cell = geometry(mesh, cells
 
 Return geometry of all cells with ids in `ids`
 """
-function geometry(mesh::Mesh, ids::HomogeneousIdIterator{C}) where C <: Cell
+function geometry(mesh::M, ids::HomogeneousIdIterator{C}) where {C <: Cell, M <: Mesh}
   @assert typeof(C) == DataType "Only a single cell type allowed"
   let vertex_coordinates = vertex_coordinates(mesh),
       mesh_conn = connectivity(mesh, C(), Dim{0}())
