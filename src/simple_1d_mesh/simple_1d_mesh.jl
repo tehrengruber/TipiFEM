@@ -3,25 +3,24 @@ module Simple1DMesh
 using TipiFEM
 using TipiFEM.Meshes
 using StaticArrays
-using Base.RefValue
 
 @import_mesh_interface
 
 abstract type Cell <: Meshes.Cell end
 
 # define what a vertex is
-immutable Vertex <: Cell end
+struct Vertex <: Cell end
 dim(::Type{Vertex}) = 0
 
 # define what an edge is
-immutable Edge <: Cell end
+struct Edge <: Cell end
 dim(::Type{Edge}) = 1
 face_count(::Type{Edge}, ::Type{Vertex}) = 2
 facet(::Type{Edge}) = Vertex
 volume(geo::Geometry{Edge}) = point(geo, 2)[1] - point(geo, 1)[1]
 
 # define what a triangle is
-#immutable Triangle <: Cell end
+#struct Triangle <: Cell end
 #dim(::Type{Triangle}) = 2
 #vertex_count(::Type{Triangle}) = 3
 #facet(::Type{Triangle}) = Edge
@@ -51,7 +50,7 @@ volume(geo::Geometry{Edge}) = point(geo, 2)[1] - point(geo, 1)[1]
 #                         Connectivity{Edge, Vertex}(vertex(tri, 2), vertex(tri, 3)),
 #                         Connectivity{Edge, Vertex}(vertex(tri, 3), vertex(tri, 1)))
 
-#immutable FEBasis{K <: Cell, typ, degree}
+#struct FEBasis{K <: Cell, typ, degree}
 #end
 
 #dof(conn::Connectivity{Edge, Vertex}, ::FEBasis{Edge, :Lagrangian, :Linear}, local_index) =

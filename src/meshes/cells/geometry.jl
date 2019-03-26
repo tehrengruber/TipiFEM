@@ -3,10 +3,10 @@ import Base.getindex
 using Base: @propagate_inbounds, @_propagate_inbounds_meta
 using TipiFEM.Utils: tparam, @typeinfo
 
-@computed immutable Geometry{K <: Cell, world_dim, REAL_ <: Real} <: StaticMatrix{REAL_}
+@computed struct Geometry{K <: Cell, world_dim, REAL_ <: Real} <: StaticMatrix{vertex_count(K), world_dim, REAL_}
   data::NTuple{vertex_count(K)*world_dim, REAL_}
 
-  function (::Type{Geometry{K, world_dim, REAL_}}){K <: Cell, world_dim, REAL_ <: Real, N}(in::NTuple{N, <:Real})
+  function (::Type{Geometry{K, world_dim, REAL_}})(in::NTuple{N, <:Real}) where {K <: Cell, world_dim, REAL_ <: Real, N}
     new(in)
   end
 end
@@ -39,16 +39,16 @@ end
   expr
 end
 
-@typeinfo cell_type{G <: Geometry}(::Type{G}) = tparam(G, 1)
-@typeinfo world_dim{G <: Geometry}(::Type{G}) = tparam(G, 2)
-@typeinfo real_type{G <: Geometry}(::Type{G}) = tparam(G, 3)
-@typeinfo vertex_count{G <: Geometry}(::Type{G}) = vertex_count(cell_type(G))
+@typeinfo cell_type(::Type{G}) where {G <: Geometry} = tparam(G, 1)
+@typeinfo world_dim(::Type{G}) where {G <: Geometry} = tparam(G, 2)
+@typeinfo real_type(::Type{G}) where {G <: Geometry} = tparam(G, 3)
+@typeinfo vertex_count(::Type{G}) where {G <: Geometry} = vertex_count(cell_type(G))
 
-@Base.pure function Size{K <: Cell, world_dim, REAL_ <: Real, _}(G::Type{Geometry{K, world_dim, REAL_, _}})
+@Base.pure function Size(G::Type{Geometry{K, world_dim, REAL_, _}}) where {K <: Cell, world_dim, REAL_ <: Real, _}
   Size(vertex_count(cell_type(G)),world_dim)
 end
 
-@Base.pure function Size{K <: Cell, world_dim, REAL_ <: Real}(C::Type{Geometry{K, world_dim, REAL_}})
+@Base.pure function Size(C::Type{Geometry{K, world_dim, REAL_}}) where {K <: Cell, world_dim, REAL_ <: Real}
   Size(fulltype(C))
 end
 

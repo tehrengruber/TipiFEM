@@ -1,9 +1,9 @@
-# In general a DofHandler can be implemented having only identites for
+# In general a DofHandler can be implemented having only identities for
 #  codim 0 and codim 1 cells (in another words having only the codim 0, 1 -> dim 0
 #  entries populated in the topology array). In 2d however we already have identities
 #  for codim 0, 1, 2 cells. Therefore we don't save anything, but get a very
 #  slick and easy to grasp implementation of the dofhandler.
-using Base.uniontypes
+using Base: uniontypes
 using TipiFEM.Utils: flatten, type_scatter
 using ComputedFieldTypes
 
@@ -20,7 +20,7 @@ This DofHandler assigns integer ranges to each cell type. A unique integer
 index is then calculated from a cell index by adding the start value of the
 corresponding range and the cell index (in integer form).
 """
-@computed type DofHandler{K <: Cell, BT <: FEBasis, M <: Mesh} <: AbstractDofHandler
+@computed struct DofHandler{K <: Cell, BT <: FEBasis, M <: Mesh} <: AbstractDofHandler
   msh::M
   basis::BT
   offset::SVector{length(flatten(type_scatter(skeleton(K)))), Int}
@@ -28,7 +28,7 @@ corresponding range and the cell index (in integer form).
   # todo: check invariant K == cell_type(M)
 end
 
-function DofHandler{K <: Cell, BT <: FEBasis}(msh::Mesh{K}, basis::BT)
+function DofHandler(msh::Mesh{K}, basis::BT) where {K <: Cell, BT <: FEBasis}
   # todo: assert initialized mesh
   # precompute offsets
   sizes = map(C -> number_of_cells(msh, C()) * multiplicity(basis, C()), flatten(type_scatter(skeleton(K))))

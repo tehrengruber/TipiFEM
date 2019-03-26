@@ -10,6 +10,8 @@ end
 
 macro export_mesh_interface(cell_type)
   esc(quote
+    using InteractiveUtils: subtypes
+
     # export mesh interface
     export dim, coordinates, vertex_count, vertices, boundary, subcell, volume, facet, face_count
     let cell_types = typeof($(cell_type)) <: AbstractArray ? $(cell_type) : subtypes($(cell_type))

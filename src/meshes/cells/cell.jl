@@ -1,5 +1,6 @@
 using TipiFEM.Utils: MethodNotImplemented
-using Base.@pure
+# todo: we want using, but it doesn't work in v1.0
+import Base.@pure
 
 export @Polytope_str, Polytope, vertex_count, @Id_str, @Connectivity_str, vertex, Connectivity
 
@@ -12,9 +13,9 @@ abstract type Cell end
 # type-traits
 ################################################################################
 # see https://en.wikipedia.org/wiki/N-skeleton
-@pure skeleton{T <: Cell}(::Type{T}) = dim(T) > 0 ? (skeleton(facet(T))..., T) : (T,)
-@dim_dispatch @Base.pure skeleton{T <: Cell, d}(::Type{T}, ::Dim{d}) = skeleton(T)[1:d+1]
-@Base.pure function subcell{T <: Cell, cd}(::Type{T}, ::Codim{cd})
+@pure skeleton(::Type{T}) where {T <: Cell} = dim(T) > 0 ? (skeleton(facet(T))..., T) : (T,)
+@dim_dispatch @Base.pure skeleton(::Type{T}, ::Dim{d}) where {T <: Cell, d} = skeleton(T)[1:d+1]
+@Base.pure function subcell(::Type{T}, ::Codim{cd}) where {T <: Cell, cd}
   if cd == 0 # end recursion
     T
   elseif typeof(T) == Union
@@ -23,26 +24,26 @@ abstract type Cell end
     subcell(facet(T), Codim{cd-1}())
   end
 end
-@Base.pure subcell{T <: Cell}(::Type{T}, d::Union{Int, Dim}) = subcell(T, Codim{dim(T)-convert(Int, d)}())
-@Base.pure subcell{T <: Cell}(::Type{T}) = subcell(T, Codim{1}())
-@Base.pure vertex{T <: Cell}(::Type{T}) = first(skeleton(T))
-@Base.pure vertex_count{T <: Cell}(::Type{T}) = face_count(T, vertex(T))
-@Base.pure facet{UT <: Union{Cell, Union}}(::Type{UT}) = begin
+@Base.pure subcell(::Type{T}, d::Union{Int, Dim}) where {T <: Cell} = subcell(T, Codim{dim(T)-convert(Int, d)}())
+@Base.pure subcell(::Type{T}) where {T <: Cell} = subcell(T, Codim{1}())
+@Base.pure vertex(::Type{T}) where {T <: Cell} = first(skeleton(T))
+@Base.pure vertex_count(::Type{T}) where {T <: Cell} = face_count(T, vertex(T))
+@Base.pure facet(::Type{UT}) where {UT <: Union{Cell, Union}} = begin
   if typeof(UT) != Union
     error("no method matching facet(::Type{$(UT)}) did you forget to define it?")
   end
   Union{facet(UT.a), facet(UT.b)}
 end
-#@Base.pure facet_count{C <: Cell, _}(::Type{Union{C, _}}) = Union{facet(UT.a), facet(UT.b)}
-@Base.pure face_count{C <: Cell}(::Type{C}, ::Type{C}) = 1
-@Base.pure facet_count{C <: Cell}(::Type{C}) = face_count(C, facet(C))
-@Base.pure function dim{UT <: Union{Cell, Union}}(::Type{UT})
-  assert(dim(UT.a)==dim(UT.b))
+#@Base.pure facet_count(::Type{Union{C, _}}) where {C <: Cell, _} = Union{facet(UT.a), facet(UT.b)}
+@Base.pure face_count(::Type{C}, ::Type{C}) where {C <: Cell} = 1
+@Base.pure facet_count(::Type{C}) where {C <: Cell} = face_count(C, facet(C))
+@Base.pure function dim(::Type{UT}) where {UT <: Union{Cell, Union}}
+  @assert dim(UT.a)==dim(UT.b)
   dim(UT.a)
 end
-@Base.pure dim_t{T<:Cell}(::Type{T}) = Dim{dim(T)}()
-@Base.pure complement{K <: Cell, i}(::Type{K}, ::Dim{i}) = Codim{dim(K)-i}()
-@Base.pure complement{K <: Cell, i}(::Type{K}, ::Codim{i}) = Dim{dim(K)-i}()
+@Base.pure dim_t(::Type{T}) where {T<:Cell} = Dim{dim(T)}()
+@Base.pure complement(::Type{K}, ::Dim{i}) where {K <: Cell, i}= Codim{dim(K)-i}()
+@Base.pure complement(::Type{K}, ::Codim{i}) where {K <: Cell, i} = Dim{dim(K)-i}()
 
 ################################################################################
 # cell interface
@@ -69,7 +70,8 @@ using TipiFEM.Utils: HeterogenousVector, HeterogenousIterator
 
 const GenericIdIterator = AbstractVector{<:Id{<:Cell}}
 
-const HomogeneousIdIterator{K <: Cell} = Union{Range{Id{K}}, AbstractVector{Id{K}}}
+# todo: with the 1.0 interface we can probably use Int for the type of the step in a range
+const HomogeneousIdIterator{K <: Cell} = Union{OrdinalRange{Id{K}, Id{K}}, AbstractVector{Id{K}}}
 
 const HeterogenousIdIterator = Union{HeterogenousVector{<:Id}, HeterogenousIterator{<:Id}}
 

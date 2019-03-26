@@ -1,4 +1,4 @@
-immutable CellRef{CELL_ <: Cell, MESH_ <: Mesh}
+struct CellRef{CELL_ <: Cell, MESH_ <: Mesh}
   mesh::MESH_
   idx::Id{CELL_}
 end

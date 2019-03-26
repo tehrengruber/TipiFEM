@@ -1,14 +1,14 @@
 using TipiFEM.Meshes
 
-using Base.Test
+using Test
 
-info("Testing Dim, Codim")
+@info "Testing Dim, Codim"
 
-info("Testing generic mesh interface")
+@info "Testing generic mesh interface"
 
-module TestMesh
+quote module TestMesh
   using StaticArrays
-  using Base.Test
+  using Test
 
   using TipiFEM.Meshes
   using TipiFEM.Simple1DMesh
@@ -43,7 +43,7 @@ module TestMesh
   #@time for (idx1, idx2) in zip(vertices(mesh)[1:end-1], vertices(mesh)[2:end])
   #  add_cell!(mesh, Edge, idx1, idx2)
   #end
-end
+end end
 
 
 using TipiFEM.PolytopalMesh
@@ -95,30 +95,30 @@ end
 let range = Id"3-node triangle"(2):Id"3-node triangle"(10)
   @test first(range)==Id"3-node triangle"(2)
   @test last(range)==Id"3-node triangle"(10)
-  @test typeof(start(range)) == typeof(next(range, start(range))[2])
+  #@test typeof(start(range)) == typeof(next(range, start(range))[2])
   @test length(range)==9
-  @inferred start(range)
-  @inferred next(range, start(range))
+  #@inferred start(range)
+  #@inferred next(range, start(range))
   @inferred first(range)
   @inferred last(range)
 end
 let range = Id"3-node triangle"(1):2:Id"3-node triangle"(10)
   @test first(range)==Id"3-node triangle"(1)
   @test last(range)==Id"3-node triangle"(9)
-  @test typeof(start(range)) == typeof(next(range, start(range))[2])
+  #@test typeof(start(range)) == typeof(next(range, start(range))[2])
   @test length(range)==5
-  @inferred start(range)
-  @inferred next(range, start(range))
+  #@inferred start(range)
+  #@inferred next(range, start(range))
   @inferred first(range)
   @inferred last(range)
 end
 let range = Base.OneTo(Id"3-node triangle"(10))
   @test first(range)==Id"3-node triangle"(1)
   @test last(range)==Id"3-node triangle"(10)
-  @test typeof(start(range)) == typeof(next(range, start(range))[2])
+  #@test typeof(start(range)) == typeof(next(range, start(range))[2])
   @test length(range)==10
-  @inferred start(range)
-  @inferred next(range, start(range))
+  #@inferred start(range)
+  #@inferred next(range, start(range))
   @inferred first(range)
   @inferred last(range)
 end
@@ -126,9 +126,9 @@ end
 ################################################################################
 # mesh function
 ################################################################################
-info("Testing mesh function")
+@info "Testing mesh function"
 @inferred MeshFunction(Polytope"1-node point", Int)
-info(" - HomogenousMeshFunction")
+@info " - HomogenousMeshFunction"
 let mf=MeshFunction(Polytope"1-node point", Int)
   push!(mf, 1)
   push!(mf, 2.)
@@ -152,7 +152,7 @@ let indices = Id"3-node triangle"(1):Id"3-node triangle"(10),
   mf = MeshFunction(indices, values)
   @test length(mf) == 10
 end
-info(" - HetereogenousMeshFunction")
+@info " - HetereogenousMeshFunction"
 let mf=MeshFunction(Union{Polytope"3-node triangle", Polytope"4-node quadrangle"}, Int)
   push!(mf, Polytope"3-node triangle", 1)
   push!(mf, Polytope"4-node quadrangle", 2.)
@@ -179,16 +179,16 @@ end
 # cell connectivity
 ################################################################################
 #c1 = Connectivity"3-node triangle → 1-node point"(1, 2, 3)
-info("Testing mesh interface")
-info(" - homogenous mesh with triangular elements")
+@info "Testing mesh interface"
+@info " - homogenous mesh with triangular elements"
 let mesh = Mesh(Polytope"3-node triangle")
   # add some vertices
   add_vertex!(mesh, 0, 0)
   add_vertex!(mesh, 0, 1)
   add_vertex!(mesh, 1, 1)
-  @test nodal_coordinates(mesh)[Id"1-node point"(1)]==[0, 0]
-  @test nodal_coordinates(mesh)[Id"1-node point"(2)]==[0, 1]
-  @test nodal_coordinates(mesh)[Id"1-node point"(3)]==[1, 1]
+  @test vertex_coordinates(mesh)[Id"1-node point"(1)]==[0, 0]
+  @test vertex_coordinates(mesh)[Id"1-node point"(2)]==[0, 1]
+  @test vertex_coordinates(mesh)[Id"1-node point"(3)]==[1, 1]
   @test number_of_cells(mesh, Polytope"1-node point") == 3
 
   # ensure that no cells with index zero may be added
@@ -206,7 +206,7 @@ let mesh = Mesh(Polytope"3-node triangle")
   # populate connecitivity
   populate_connectivity!(mesh)
 end
-info(" - homogenous mesh with quadrilateral elements")
+@info " - homogenous mesh with quadrilateral elements"
 # v3 ---- v2 ---- v5
 #  |       |       |
 #  |       |       |
@@ -237,7 +237,7 @@ let mesh = Mesh(Polytope"4-node quadrangle")
   populate_connectivity!(mesh)
   @test length(topology(mesh)[Polytope"2-node line"]) == 7
 end
-info(" - heterongenous mesh with triangular and quadrilateral elements")
+@info " - heterongenous mesh with triangular and quadrilateral elements"
 let mesh = Mesh(Union{Polytope"3-node triangle", Polytope"4-node quadrangle"})
   # add some vertices
   add_vertex!(mesh, 0, 0)
@@ -265,7 +265,8 @@ end
 # cell geometry
 ################################################################################
 using StaticArrays
-info("Testing cell geometry")
+using LinearAlgebra
+@info "Testing cell geometry"
 const coord_t = SVector{2, Float64}
 
 let ref_tria = reference_element(Polytope"3-node triangle"),
@@ -285,7 +286,7 @@ end
 #
 # type stability
 #
-info("Testing type stability")
+@info "Testing type stability"
 let mesh = Mesh(Polytope"4-node quadrangle")
   # add some vertices
   add_vertex!(mesh, 0, 0)
@@ -461,7 +462,7 @@ end
 
 exit()
 
-immutable Vertex <: Cell end
+struct Vertex <: Cell end
 dim(::Type{vertex}) = 0
 
 ################################################################################

@@ -1,4 +1,5 @@
 using StaticArrays
+using LinearAlgebra
 export facets
 
 using TipiFEM.Utils: @generate_sisd
@@ -54,8 +55,8 @@ function find_longest_edge(conn::C, geo::G) where {C <: Connectivity"3-node tria
 end
 
 # todo: local indices differ to refine(conn, geo)
-function refine{G <: Geometry{Polytope"3-node triangle"}}(geo::G)
-  const edge_t = Geometry{Polytope"2-node line", world_dim(G), real_type(G)}
+function refine(geo::G) where G <: Geometry{Polytope"3-node triangle"}
+  edge_t = Geometry{Polytope"2-node line", world_dim(G), real_type(G)}
   edges = facets(ref_tria)
   # find longest edge
   longest_edge_index, longest_edge = find_longest_edge(geo)
@@ -96,11 +97,13 @@ end
 volume(geo::Geometry{Polytope"2-node line"}) = norm(point(geo, 1) - point(geo, 2))
 
 "Area of a triangle"
-@inline volume{G <: Geometry{Polytope"3-node triangle"}}(geo::G) = abs(det(SMatrix{3, 3, real_type(G)}(
-  one(real_type(G)), point(geo, 1)[1], point(geo, 1)[2],
-  one(real_type(G)), point(geo, 2)[1], point(geo, 2)[2],
-  one(real_type(G)), point(geo, 3)[1], point(geo, 3)[2],
-)))/2
+@inline function volume(geo::G) where G <: Geometry{Polytope"3-node triangle"}
+  abs(det(SMatrix{3, 3, real_type(G)}(
+    one(real_type(G)), point(geo, 1)[1], point(geo, 1)[2],
+    one(real_type(G)), point(geo, 2)[1], point(geo, 2)[2],
+    one(real_type(G)), point(geo, 3)[1], point(geo, 3)[2],
+  )))/2
+end
 
 "Area of a quadrangle"
 function volume(geo::Geometry{Polytope"4-node quadrangle"})
@@ -113,8 +116,8 @@ Integration element of the geometry mapping
 
 In other words the determinant of the jacobian of of the geometry mapping.
 """
-function integration_element{n}(geo::Geometry{Polytope"3-node triangle"},
-    x::SMatrix{n, 2, <:Real})
+function integration_element(geo::Geometry{Polytope"3-node triangle"},
+    x::SMatrix{n, 2, <:Real}) where n
   volume(geo)*2*ones(SVector{n, eltype(x)})
 end
 
@@ -124,8 +127,8 @@ function integration_element(geo::Geometry{Polytope"3-node triangle"}, x::SVecto
   volume(geo)*2
 end
 
-function integration_element{n}(geo::Geometry{Polytope"4-node quadrangle"},
-    x::SMatrix{n, 2, <:Real})
+function integration_element(geo::Geometry{Polytope"4-node quadrangle"},
+    x::SMatrix{n, 2, <:Real}) where n
   det(jacobian_transposed(geo, x[1, :]))*ones(SVector{n, eltype(x)})
 end
 
@@ -135,7 +138,8 @@ end
 
 integration_element(geo::Geometry{Polytope"2-node line"}) = volume(geo)
 
-integration_element{n}(geo::Geometry{Polytope"2-node line"}, x::Union{SVector{n, <: Real}, SMatrix{n, 1, <:Real}}) = volume(geo)
+integration_element(geo::Geometry{Polytope"2-node line"},
+  x::Union{SVector{n, <: Real}, SMatrix{n, 1, <:Real}}) where n = volume(geo)
 
 integration_element(geo::Geometry{Polytope"2-node line"}, x::Real) = volume(geo)
 
@@ -156,7 +160,7 @@ on the reference element map them to coordinates on `G`.
 
   quote
     # evaluate local shape functions
-    #  the i-th index containts the values of the i-th local shape function
+    #  the i-th index contains the values of the i-th local shape function
     lsfns = local_shape_functions(FEBasis{:Lagrangian, 1}(), C(), x̂s)
     $(expr)
   end
@@ -188,7 +192,15 @@ end
 function jacobian_transposed(geo::Geometry{C, world_dim},
     x̂::SVector{local_dim, T}) where {C <: Polytope, world_dim, local_dim, T<:Real}
   grads = grad_local_shape_functions(FEBasis{:Lagrangian, 1}(), C(), x̂)
-  reduce(hcat, grads)*geo
+
+  m_grads = zeros(MArray{Tuple{local_dim, length(grads)}, T})
+  for i in 1:length(grads)
+    m_grads[:, i] = grads[i]
+  end
+  m_grads * geo
+
+  # todo: use again after update of statticarrays
+  #reduce(hcat, grads)*geo
 end
 
 function jacobian_inverse_transposed(geo::Geometry{C, world_dim},
@@ -220,11 +232,11 @@ end
 
 midpoint(geo::Geometry{Polytope"2-node line"}) = (point(geo, 1)+point(geo, 2))/2
 
-function midpoint_quadrature_rule{G <: Geometry{Polytope"3-node triangle"}}(geo::G, f::Function)
+function midpoint_quadrature_rule(geo::G, f::Function) where G <: Geometry{Polytope"3-node triangle"}
   sum(map(e -> f(midpoint(e)), facets(geo)))/6
 end
 
-function local_midpoint_quad_rule{G <: Geometry{Polytope"3-node triangle"}}(::Type{G}, f::Function)
+function local_midpoint_quad_rule(::Type{G}, f::Function) where G <: Geometry{Polytope"3-node triangle"}
   ref_geo = reference_element(G)
   sum(map(e -> f(midpoint(e)), facets(ref_geo)))/6
 end

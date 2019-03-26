@@ -1,6 +1,7 @@
 import Base.show
+import Printf: @sprintf
 
-function show{K <: Cell}(io::IO, ::MIME"text/plain", mesh_topology::MeshTopology{K}; simple=false, indent=0)
+function show(io::IO, ::MIME"text/plain", mesh_topology::MeshTopology{K}; simple=false, indent=0) where K <: Cell
   mesh_dim=dim(K)
   let indent=isa(indent, Int) ? repeat(" ", indent) : indent,
       print=s->write(io, indent * s)
@@ -17,10 +18,9 @@ function show{K <: Cell}(io::IO, ::MIME"text/plain", mesh_topology::MeshTopology
   end
 end
 
-import Base.show
 function show(io::IO, ::MIME"text/plain", msh::Mesh)
     write(io,
-          """TipiFEM.Mesh at $(pointer_from_objref(msh))
+          """TipiFEM.Mesh
             world dim: $(world_dim(msh))
             mesh dimension: $(mesh_dim(msh))
             cell types: $(join(cell_types(msh), ", "))

@@ -33,7 +33,7 @@ types expanded as tuples
 """
 type_scatter(t::Tuple) = map(type_scatter, t)
 type_scatter(t::Type) = t
-type_scatter(u::Union) = (Base.uniontypes(u)...)
+type_scatter(u::Union) = (Base.uniontypes(u)...,)
 
 type_gather(t::Tuple) = map(e -> isa(e, Tuple) ? Union{e...} : e, t)
 
@@ -59,16 +59,16 @@ Given an expression return a canonical form of that expression
 e.g. transform `a(x::T) where T <: Real = 1` into a{T}(x::T) = 1
 """
 function canonicalize(expr::Expr)
-  expr = macroexpand(expr)
   expr = longdef(expr)
-  postwalk(expr) do ex
-    if isa(ex, Expr) && ex.head == :where
-      @capture(ex, f_(args__) where Ts__)
-      Expr(:call, Expr(:curly, f, Ts...), args...)
-    else
-      ex
-    end
-  end
+  expr
+#  postwalk(expr) do ex
+#    if isa(ex, Expr) && ex.head == :where
+#      @capture(ex, f_(args__) where Ts__)
+#      Expr(:call, Expr(:curly, f, Ts...), args...)
+#    else
+#      ex
+#    end
+#  end
 end
 
 struct InvalidVecFnExprException <: Exception
@@ -150,15 +150,15 @@ macro generate_sisd(expr)
   #
   # decompose expression
   #
+  expr = macroexpand(__module__, expr) # expand macros
   expr = canonicalize(expr) # rewrite expression in a canonical form
-  expr = macroexpand(expr) # expand macros
   # ensure that the expression is a function definition
   expr.head ∈ (:function, :stagedfunction) || error("Expected function definition")
   sig = expr.args[1] # extract function signature
   body = expr.args[2] # extract function body
   body.head == :block || error("Unexpted syntax") # we take this for granted later on
   # decompose function signature
-  @capture(sig, (f_{Ts__}(args__)) | f_{Ts__}(args__)::return_type_) || error("Expected function definition")
+  @capture(sig, (f_(args__) where {Ts__}) | (f_(args__)::return_type_) where {Ts__}) || error("Expected function definition")
   # find all return types
   #  if the return type has been annotated in the signature use that type
   # otherwise search in the function body
@@ -175,7 +175,7 @@ macro generate_sisd(expr)
   end
   # remove :curly
   # rewrite arguments
-  vector_args = Array{Bool, 1}(length(args))
+  vector_args = Array{Bool, 1}(undef, length(args))
   sisd_args = map(1:length(args), args) do i, arg
     # rewrite vector arguments into scalar arguments
     # todo: allow function that do not specify T
@@ -217,7 +217,7 @@ macro generate_sisd(expr)
         [TT[1]]
       end
       # search for the dimension(s) that contains the VectorWidth
-      vector_dims = find(dim -> dim==vector_width, dims)
+      vector_dims = findall(dim -> dim==vector_width, dims)
       call_expr = Expr(:ref, forward_call_expr)
       for i in 1:length(dims)
         push!(call_expr.args, i ∈ vector_dims ? 1 : :(:))
@@ -227,16 +227,18 @@ macro generate_sisd(expr)
     end
   end
   sisd_expr = Expr(:function,
-                   Expr(:call, Expr(:curly, f, sisd_Ts...), sisd_args...),
-                   call_expr)
+    Expr(:where, Expr(:call, f, sisd_args...), sisd_Ts...),
+    call_expr
+  )
   esc(Expr(:block, :(Base.@__doc__ $(expr)), sisd_expr))
 end
 
 macro typeinfo(expr)
   # rewrite expression in a canonical form
+  expr = macroexpand(__module__, expr)
   expr = canonicalize(expr)
   # extract function name, signature, body from expression
-  is_fn_def = @capture(expr, function f_{targs__}(args__)
+  is_fn_def = @capture(expr, function f_(args__) where {targs__}
                    body_
                  end)
   if !is_fn_def
@@ -263,7 +265,7 @@ macro typeinfo(expr)
       arg
     end
   end
-  nexpr = :(function $(f){$(ntargs...)}($(nargs...))
+  nexpr = :(function $(f)($(nargs...)) where {$(ntargs...)}
               $(body.args...)
             end)
   # make both expression a pure function
@@ -282,18 +284,18 @@ mutable struct IndexMapping{I, V, II, VI}
   indices::II
   values::VI
 
-  function (::Type{IndexMapping{I, V}}){I, V}()
+  function IndexMapping() where {I, V}
     let II = Vector{I}, VI = Vector{V}
       new{I, V, II, VI}(II(), VI())
     end
   end
 
-  (::Type{IndexMapping{I, V, II, VI}}){I, V, II, VI}(indices, values) = new{I, V, II, VI}(indices, values)
+  IndexMapping(indices, values) where {I, V, II, VI} = new{I, V, II, VI}(indices, values)
 
-  (::Type{IndexMapping{V}}){V}() = IndexMapping{Int, V}()
+  IndexMapping() where {V} = IndexMapping{Int, V}()
 end
 
-IndexMapping{II, VI}(indices::II, values::VI) = IndexMapping{eltype(II), eltype(VI), II, VI}(indices, values)
+IndexMapping(indices::II, values::VI) where {II, VI} = IndexMapping{eltype(II), eltype(VI), II, VI}(indices, values)
 
 indices(indmap::IndexMapping) = indmap.indices
 values(indmap::IndexMapping) = indmap.values
@@ -320,22 +322,22 @@ _hetarrhelper = (Ts) -> Tuple{map(T -> Vector{T}, Ts.parameters)...}
   data::_hetarrhelper(Ts)
 end
 
-function (::Type{HeterogenousVector{Ts}}){Ts <: Tuple}(data)
+function (::Type{HeterogenousVector{Ts}})(data) where {Ts <: Tuple}
   HeterogenousVector{Union{Ts.parameters...}, Ts}(data)
 end
 
-@generated function HeterogenousVector{Ts <: Tuple}(data::Ts)
+@generated function HeterogenousVector(data::Ts) where {Ts <: Tuple}
   :(HeterogenousVector{$(Tuple{map(T -> eltype(T), Ts.types)...})}(data))
 end
 
-function (::Type{HeterogenousVector{Ts}}){Ts <: Tuple}()
+function (::Type{HeterogenousVector{Ts}})() where {Ts <: Tuple}
   HeterogenousVector{Union{Ts.parameters...}, Ts}(map(T -> Vector{T}(), (Ts.parameters...)))
 end
 
 """
 Return the array that contains the elements of type `ET`
 """
-@generated function getindex{T, Ts, Ti}(arr::HeterogenousVector{T, Ts}, ::Type{Ti})
+@generated function getindex(arr::HeterogenousVector{T, Ts}, ::Type{Ti}) where {T, Ts, Ti}
   i = findfirst(Ts.parameters, Ti)
   if i==0
     error("HeterogenousArray has no subarray with element type $(ET)")
@@ -346,7 +348,7 @@ end
 eltype(arr::HeterogenousVector{T}) where T = T
 size(arr::HeterogenousVector) = (length(arr),)
 length(arr::HeterogenousVector) = mapreduce(length, +, decompose(arr))
-push!{T}(arr::HeterogenousVector, v::T) = push!(arr[T], v)
+push!(arr::HeterogenousVector, v::T) where {T} = push!(arr[T], v)
 
 function getindex(arr::HeterogenousVector, j::Int)
   offset = 0
@@ -377,26 +379,26 @@ map!(f::Function, harr::HeterogenousVector) = compose(map!(arr -> map(f, arr), d
 #
 # HeterogenousIterator
 #
-import Base: length, size, eltype, start, next, done, map, mapfoldl, zip, collect
+import Base: length, size, eltype, map, mapfoldl, zip, collect
 
 # Concatenate the output of n iterators
-immutable HeterogenousIterator{T, Ts <: Tuple}
+struct HeterogenousIterator{T, Ts <: Tuple}
   iters::Ts
 end
 
-@generated function (::Type{HeterogenousIterator{Ts}}){Ts <: Tuple}(data)
+@generated function (::Type{HeterogenousIterator{Ts}})(data) where {Ts <: Tuple}
   :(HeterogenousIterator{$(Union{map(T -> eltype(T), Ts.parameters)...}), Ts}(data))
 end
 
-function HeterogenousIterator{Ts <: Tuple}(data::Ts)
+function HeterogenousIterator(data::Ts) where {Ts <: Tuple}
   HeterogenousIterator{Ts}(data)
 end
 
 decompose(hiter::HeterogenousIterator) = hiter.iters
 
-iteratorsize{T, Ts}(::Type{HeterogenousIterator{T, Ts}}) = _het_it_is(Ts)
+iteratorsize(::Type{HeterogenousIterator{T, Ts}}) where {T, Ts} = _het_it_is(Ts)
 
-@generated function _het_it_is{Ts}(t::Type{Ts})
+@generated function _het_it_is(t::Type{Ts}) where {Ts}
     for itype in Ts.types
         if iteratorsize(itype) == IsInfinite()
             return :(IsInfinite())
@@ -432,7 +434,7 @@ length(it::HeterogenousIterator) = sum(length, it.iters)
 size(it::HeterogenousIterator) = (length(it),)
 
 #eltype{T}(::Type{Chain{T}}) = typejoin([eltype(t) for t in T.parameters]...)
-@Base.pure eltype{T, Ts}(::Type{HeterogenousIterator{T, Ts}}) = Union{(eltype(t) for t in Ts.types)...}
+@Base.pure eltype(::Type{HeterogenousIterator{T, Ts}}) where {T, Ts} = Union{(eltype(t) for t in Ts.types)...}
 
 function start(it::HeterogenousIterator)
   i = 1

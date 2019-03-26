@@ -1,6 +1,6 @@
 using TipiFEM.Meshes: HeterogenousMeshFunction, dim_t
 using TipiFEM.Utils: IndexMapping, tparam
-using Base.return_types
+using Base: return_types
 
 """
 Finite Element Space
@@ -10,11 +10,11 @@ Finite Element Space
  - D: DofHandler
 
 For cell_type(M) beeing Polytope"3-node triangle" this is the following function space:
-\[
-  { v ∈ C^k(X) : v_{|C} \in {\cal P}(C) \forall C \in {\cal M} }
-\]
+```math
+  { v ∈ C^k(X) : v_{|C} \\in {\\cal P}(C) \\forall C \\in {\\cal M} }
+```
 """
-@computed type FESpace{B <: FEBasis, M <: Mesh, D <: DofHandler, ID_ITER <: IdIterator}
+@computed struct FESpace{B <: FEBasis, M <: Mesh, D <: DofHandler, ID_ITER <: IdIterator}
   # specification of the basis functions
   basis::B
 
@@ -42,7 +42,7 @@ end
 # Constructors
 #
 "construct a finite element space"
-function FESpace{B <: FEBasis, M <: Mesh}(basis::B, mesh::M)
+function FESpace(basis::B, mesh::M) where {B <: FEBasis, M <: Mesh}
   # construct active cell mask
   active_cells_mask = MeshFunction(Union{skeleton(element_type(M))...}, Bool)
   # construct dof handler
@@ -66,7 +66,7 @@ function FESpace{B <: FEBasis, M <: Mesh}(basis::B, mesh::M)
 end
 
 "construct a finite element space"
-function FESpace{B <: FEBasis, M <: Mesh, ID_ITER <: IdIterator}(basis::B, mesh::M, active_cells::ID_ITER)
+function FESpace(basis::B, mesh::M, active_cells::ID_ITER) where {B <: FEBasis, M <: Mesh, ID_ITER <: IdIterator}
   active_cells_mask = MeshFunction(Union{skeleton(element_type(M))...}, Bool)
   # construct dof handler
   d = DofHandler(mesh, basis)
@@ -206,7 +206,7 @@ function interpolation_nodes(fespace::FESpace, cells::IdIterator)
       result = IndexMapping{InterpolationNodeIndex, SVector{world_dim(mesh), real_type(mesh)}}(),
       basis = basis(fespace)
     foreach(decompose(cells)) do cells
-      const K = cell_type(cells)
+      K = cell_type(cells)
       for (cid, geo) in graph(geometry(mesh, cells))
         for interp_node in interpolation_nodes(basis, K())
           #push!(result, dofs[index(interp_node)], local_to_global(geo, coordinates(interp_node))
@@ -386,7 +386,7 @@ end
 """
 Space of p-th degree Lagrangian finite element functions on M
 
-{ v ∈ C^k(X) : v_{|C} \in {\cal P}(C) \forall C \in {\cal M} }
+{ v ∈ C^k(X) : v_{|C} \\in {\\cal P}(C) \\forall C \\in {\\cal M} }
 """
 const LagrangianFESpace{p, M} = FESpace{FEBasis{:Lagrangian, p}, M}
 

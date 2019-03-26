@@ -1,9 +1,12 @@
-#__precompile__()
+__precompile__(false)
 
 module TipiFEM
 
-import Base.eltype
-eltype(G::Base.Generator) = Base.code_typed(G.f,(eltype(G.iter),))[1].rettype
+# todo: remove
+#import Base.eltype
+#function eltype(G::Base.Generator)
+#    Base.code_typed(G.f,(eltype(G.iter),))[1].rettype
+#end
 
 # export submodules
 export Meshes, PolytopalMesh
@@ -25,7 +28,7 @@ include("fe/fe.jl")
 let expr = quote
         using TipiFEM: grad_local_shape_functions, local_shape_functions
     end
-    eval(TipiFEM.PolytopalMesh, expr)
+    Base.eval(TipiFEM.PolytopalMesh, expr)
 end
 
 end

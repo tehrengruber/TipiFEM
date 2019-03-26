@@ -1,7 +1,8 @@
-using Base.@pure
+# todo: we want using, but it doesn't work in v1.0
+import Base.@pure
 
 "Singleton type representing a convex polytope"
-immutable Polytope{id} <: Cell end
+struct Polytope{id} <: Cell end
 
 """
 The ids and names are borrowed from the gmsh file format
@@ -47,7 +48,7 @@ const polytope_ids = Dict(
 const polytopes = collect(Polytope{id} for id in keys(polytope_ids))
 
 "Map name of a polytope to its id"
-const polytope_ids_transpose = map((p) -> p[2] => p[1], polytope_ids)
+const polytope_ids_transpose = Dict(values(polytope_ids) .=> keys(polytope_ids))
 
 "Map polytopes to their number of vertices"
 const polytope_vertex_count = Dict(collect((id, parse(Int, match(r"([0-9]+)", name)[1])) for (id, name) in polytope_ids))
@@ -57,14 +58,14 @@ Expand an expression like `Polytope"1-node point"` into the corresponding
 datatype `Polytope{15}`
 """
 macro Polytope_str(s)
-    :(Polytope{$(polytope_ids_transpose[s])})
+    :($(Polytope){$(polytope_ids_transpose[s])})
 end
 
 """
 Expand an expression like `Id"1-node point"` into the corresponding
 datatype `Id{Polytope"1-node point"}`
 """
-macro Id_str(s) :(Id{$(macroexpand(:(@Polytope_str($(s)))))}) end
+macro Id_str(s) :($(Id){$(macroexpand(TipiFEM.PolytopalMesh, :(@Polytope_str($(s)))))}) end
 
 Polytope(s::String) = Polytope{polytope_ids_transpose[s]}()
 
@@ -91,9 +92,9 @@ end
 
 ################################################################################
 
-parse_connectivity_string(s::String) = let sep_pos=search(s, '→')
-    typeof(Polytope(strip(s[1:sep_pos-1]))),
-    typeof(Polytope(strip(s[sep_pos+3:end])))
+parse_connectivity_string(s::String) = let sep_pos=findfirst(isequal('→'), s)
+    typeof(Polytope(string(strip(s[1:sep_pos-1])))),
+    typeof(Polytope(string(strip(s[sep_pos+3:end]))))
 end
 
 macro Connectivity_str(s)

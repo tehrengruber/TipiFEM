@@ -1,4 +1,4 @@
-using TipiFEM.Utils.@sanitycheck
+using TipiFEM.Utils: @sanitycheck
 
 include("febasis.jl")
 include("dofhandler.jl")

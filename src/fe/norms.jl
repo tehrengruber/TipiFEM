@@ -4,8 +4,8 @@ using TipiFEM.Quadrature
 Compute the L2 norm of the difference of μ with u
 """
 function l2_norm(fespace, μ, u)
-  const quadrule_list = QuadruleList(Quadrule{Polytope"3-node triangle", 25, Float64},
-                                     Quadrule{Polytope"4-node quadrangle", 36, Float64})
+  quadrule_list = QuadruleList(Quadrule{Polytope"3-node triangle", 25, Float64},
+                               Quadrule{Polytope"4-node quadrangle", 36, Float64})
   let dofh = dofh(fespace), basis=basis(fespace), mesh=mesh(fespace)
     result = 0.
     foreach(decompose(graph(geometry(mesh)))) do mesh_geo

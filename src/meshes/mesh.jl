@@ -5,7 +5,7 @@ export subcell, world_dim
 
 # todo: add invalid flag to all cell entities
 
-using Base.OneTo
+using Base: OneTo
 """
 Construct a generic mesh containing `K` cells.
 
@@ -14,7 +14,7 @@ Mesh(Polygon"3-node triangle")
 Mesh(Union{Polygon"3-node triangle", Polygon"4-node quadrangle"})
 ```
 """
-@computed immutable Mesh{K, world_dim, REAL_ <: Real, simple, PM}
+@computed struct Mesh{K, world_dim, REAL_ <: Real, simple, PM}
   nodes::HomogenousMeshFunction{vertex(K), SVector{world_dim, REAL_},
     simple ? OneTo{Id{vertex(K)}} : Vector{Id{vertex(K)}}, Vector{SVector{world_dim, REAL_}}}
   topology::fulltype(MeshTopology{K, simple})
@@ -33,7 +33,7 @@ Mesh(Union{Polygon"3-node triangle", Polygon"4-node quadrangle"})
   end
 end
 
-Mesh{K <: Cell}(::Type{K}; simple=Val{true}) = Mesh{K, dim(K), Float64, simple==Val{true}, Void}()
+Mesh(::Type{K}; simple=Val{true}) where K <: Cell = Mesh{K, dim(K), Float64, simple==Val{true}, Nothing}()
 
 "is the mesh simple"
 @typeinfo issimple(M::Type{<:Mesh}) =  tparam(M, 4)
@@ -61,10 +61,10 @@ end
 end
 
 "type of cells in `M` with (co)-dimension `d` as a tuple"
-@typeinfo cell_types(M::Type{<:Mesh}, d=Codim{0}()) = (Base.uniontypes(cell_type(M, d))...)
+@typeinfo cell_types(M::Type{<:Mesh}, d=Codim{0}()) = (Base.uniontypes(cell_type(M, d))...,)
 
 "Number of `d` dimensional cells in `msh`"
-@dim_dispatch function number_of_cells{K}(msh::Mesh{K}, d::Codim)
+@dim_dispatch function number_of_cells(msh::Mesh{K}, d::Codim) where K <: Cell
   # if the number of vertices is requested we have to look at the nodes arrays
   if complement(element_type(msh), d)==Dim{0}()
     length(msh.nodes)
@@ -128,11 +128,11 @@ connectivity of i-cells with j-cells
 
 this represents the incedence relation of i-cells with j-cells
 """
-@dim_dispatch function connectivity{K <: Cell, i, j}(mesh::Mesh{K}, d1::Dim{i}, d2::Dim{j})
+@dim_dispatch function connectivity(mesh::Mesh{K}, d1::Dim{i}, d2::Dim{j}) where {K <: Cell, i, j}
   topology(mesh)[d1, d2]
 end
 
-@dim_dispatch function connectivity{K <: Cell, C <: Cell}(mesh::Mesh{K}, ::C, j::Dim)
+@dim_dispatch function connectivity(mesh::Mesh{K}, ::C, j::Dim) where {K <: Cell, C <: Cell}
   #assert(subcell(C1, dim_t(C2)) == C2)
   connectivity(mesh, dim_t(C), j)[C]
 end
@@ -155,7 +155,7 @@ function add_vertex!(mesh, i::Id, coords::SVector)
 end
 
 export add_vertices!
-function add_vertices!{REAL_ <: Real}(mesh, vertices::AbstractArray{REAL_, 2})
+function add_vertices!(mesh, vertices::AbstractArray{REAL_, 2}) where REAL_ <: Real
   println("add vertices")
   @assert world_dim(mesh)==size(vertices, 1)
   bla=reinterpret(SVector{world_dim(mesh),REAL_}, vertices, (size(vertices, 2),))
@@ -168,14 +168,14 @@ function add_cell!(mesh::Mesh, ::Type{K}, vertices::VID...) where {K <: Cell, VI
   add_cell!(mesh, Connectivity{K, vertex(K)}(vertices...))
 end
 
-function add_cell!{K <: Cell}(mesh::Mesh, conn::Connectivity{K})
+function add_cell!(mesh::Mesh, conn::Connectivity{K}) where K <: Cell
   @assert(K ∈ flatten(type_scatter(skeleton(element_type(mesh)))),
           """Can not add a cell of type $(K) into a mesh with element type $(element_type(msh))
           admissable cell types: $(flatten(type_scatter(skeleton(element_type(msh)))))""")
   @inbounds push!(connectivity(mesh, dim_t(K), Dim{0}()), K, conn)
 end
 
-function add_cell!(mesh::Mesh, i::Id{K}, conn::Connectivity{K}) where {K <: Cell}
+function add_cell!(mesh::Mesh, i::Id{K}, conn::Connectivity{K}) where K <: Cell
   push!(connectivity(mesh, dim_t(K), Dim{0}()), i, conn)
 end
 
@@ -208,19 +208,25 @@ end
 geometry(mesh::Mesh) = geometry(mesh, Codim{0}())
 
 """
+    geometry(mesh::Mesh, i::Dim)
+
 Return geometry of all `i`-dimensional cells
 """
-@dim_dispatch geometry{K <: Cell}(mesh::Mesh{K}, i::Dim) = geometry(mesh, cells(mesh, i))
+@dim_dispatch geometry(mesh::Mesh{K}, i::Dim) where K <: Cell = geometry(mesh, cells(mesh, i))
 
 """
+    geometry(mesh::Mesh, ::Union{C, Type{C}}) where C <: Cell
+
 Return geometry of all cells with type `C`
 """
-geometry(mesh::Mesh, ::Union{C, Type{C}}) where {C <: Cell} = geometry(mesh, cells(mesh, C()))
+geometry(mesh::Mesh, ::Union{C, Type{C}}) where C <: Cell = geometry(mesh, cells(mesh, C()))
 
 """
+  geometry(mesh::Mesh, ids)
+
 Return geometry of all cells with ids in `ids`
 """
-function geometry(mesh::M, ids::HomogeneousIdIterator{C}) where {M <: Mesh, C <: Cell}
+function geometry(mesh::Mesh, ids::HomogeneousIdIterator{C}) where C <: Cell
   @assert typeof(C) == DataType "Only a single cell type allowed"
   let vertex_coordinates = vertex_coordinates(mesh),
       mesh_conn = connectivity(mesh, C(), Dim{0}())
@@ -233,39 +239,46 @@ function geometry(mesh::M, ids::HomogeneousIdIterator{C}) where {M <: Mesh, C <:
   end
 end
 
-"""
-Return geometry of all cells with ids in `ids`
-"""
-function geometry(mesh::M, ids::HeterogenousIdIterator) where M <: Mesh
+function geometry(mesh::Mesh, ids::HeterogenousIdIterator)
   compose(map(ids -> geometry(mesh, ids), decompose(ids)))
 end
 
 """
+    geometry(mesh::Mesh, id::Id{C}) where C <: Cell
+
 Return geometry of the cell with id `id`
 """
 function geometry(mesh::Mesh, id::Id{C}) where C <: Cell
-  nodes = nodal_coordinates(mesh)
+  nodes = vertex_coordinates(mesh)
   conn = vertex_connectivity(mesh, C())[id]
   Geometry{C, world_dim(mesh), real_type(mesh)}(map(vidx -> nodes[vidx], conn))
 end
 
 """
+    elements(mesh::Mesh)
+
 Return the ids of all mesh elements (i.e. codim zero cells)
 """
-elements(mesh) = domain(connectivity(mesh, Codim{0}(), Dim{0}()))
+elements(mesh::Mesh) = domain(connectivity(mesh, Codim{0}(), Dim{0}()))
 
 """
+    cell_groups(mesh::Mesh)
+
 Return a dictionary of all cell groups, where the key is the tag and the value
 the corresponding cell group
 """
 cell_groups(mesh::Mesh) = mesh.cell_groups
 
 """
+    tagged_cells(mesh::Mesh, tag)
+
 Return the cell group tagged with `tag`
 """
 tagged_cells(mesh::Mesh, tag) = cell_groups(mesh)[tag]
 
 """
+    tag_cells!(pred::Function, mesh::Mesh, ::Union{C, Type{C}}, tag) where C <: Cell
+
 Given a predicate `pred` taking a cell geometry tag all cells for which
 `pred` returns true with `tag`
 """
@@ -297,8 +310,8 @@ function tag_cells!(pred::Function, mesh::Mesh, cells::TypedIdIterator, tag)
 end
 
 """
-Given a predicate `pred` taking a cell geometry tag all cells for which
-`pred` return true
+Given a predicate `pred` taking a cell geometry tag all vertices for which
+`pred` returns true
 """
 function tag_vertices(pred::Function, mesh::Mesh, vertex_ids::Array{Id}, tag)
   tagged_vertices = Array{Id{vertex_type(element_type(mesh))}}()
@@ -378,7 +391,7 @@ function extract(mesh::Mesh{K, world_dim, REAL_}, cells::HomogeneousIdIterator) 
 end
 
 function populate_connectivity!(msh::Mesh{Ks}) where Ks <: Cell
-  const facet_conn_t = Connectivity{facet(Ks), subcell(Ks, Dim{0}())}
+  facet_conn_t = Connectivity{facet(Ks), subcell(Ks, Dim{0}())}
   # clear connectivity (in case the connectivity is already populated)
   clear_connectivity!(topology(msh), Codim{0}(), Codim{1}())
   clear_connectivity!(topology(msh), Codim{0}(), Codim{0}())

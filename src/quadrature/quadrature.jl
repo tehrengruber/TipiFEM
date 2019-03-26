@@ -17,17 +17,19 @@ Datatype storing a quadrature rule to evaluate integrals on mesh cells
  - `x`     - quadrature points
  - `scale` - scaling factors
 """
-@computed type Quadrule{C <: Cell, order, REAL_T}
+@computed struct Quadrule{C <: Cell, order, REAL_T}
   w::SVector{order, REAL_T}
   x::SVector{order, dim(C) == 1 ? REAL_T : SVector{dim(C), REAL_T}}
   scale::REAL_T
 end
 
-immutable QuadruleList{Cs <: Tuple, RULES_T <: Tuple}
+struct QuadruleList{Cs <: Tuple, RULES_T <: Tuple}
   quadrules::RULES_T
 end
 
-(::Type{QuadruleList{Cs}}){Cs <: Tuple, RULES_T <: Tuple}(quadrules::RULES_T) = QuadruleList{Cs, RULES_T}(quadrules)
+function (::Type{QuadruleList{Cs}})(quadrules::RULES_T) where {Cs <: Tuple, RULES_T <: Tuple}
+  QuadruleList{Cs, RULES_T}(quadrules)
+end
 
 @generated function QuadruleList(rules_t::Type...)
   cell_type_expr = Expr(:curly, Tuple)
@@ -58,7 +60,7 @@ end
 """
 Appriximate integral of `f` over cell `geo` with order `order`
 """
-function integrate{G <: Geometry}(f::Function, geo::G; order=Val{25})
+function integrate(f::Function, geo::G; order=Val{25}) where G <: Geometry
   integrate_local(x̂ -> f(local_to_global(geo, x̂)), geo, order=order)
   #w, x_local, s = quadrule(Quadrule{cell_type(G), 3, real_type(G)})
   ##let Φ = (x)->local_to_global(geo,x), δvol = (x)->integration_element(geo,x)
@@ -71,13 +73,13 @@ function integrate{G <: Geometry}(f::Function, geo::G; order=Val{25})
   ##end
 end
 
-using TipiFEM.Utils.tparam
+using TipiFEM.Utils: tparam
 
 # todo: slow!
 """
 Integrate a function `f̂` that lives on the reference triangle over `geo`
 """
-function integrate_local{G <: Geometry}(f̂::Function, geo::G, order=Val{25})
+function integrate_local(f̂::Function, geo::G, order=Val{25}) where G <: Geometry
   w, x_local, s = quadrule(Quadrule{cell_type(G), tparam(tparam(order, 1), 1), real_type(G)})
   sum = zero(real_type(G))
   @fastmath @inbounds @simd for i in 1:length(w)
@@ -105,7 +107,7 @@ macro generate_quadrature_rules(cell_type, real_type, quadrules)
         let (w, x_us, s)=quadrule_data, # extract quad_data
             node_t = dim(cell_type) == 1 ? real_type : SVector{dim(cell_type), real_type},
             nodes_t = SVector{order, node_t},
-            x = nodes_t(reinterpret(node_t, x_us, (order,))...),
+            x = nodes_t(reinterpret(node_t, x_us)...),
             quadrule = Quadrule{cell_type, order, real_type}(w, x, s)
           eval(:(@Base.pure function quadrule(::Type{Quadrule{$(cell_type), $(order), $(real_type)}})
             $(quadrule.w)::$(typeof(quadrule.w)), $(quadrule.x)::$(typeof(quadrule.x)), $(quadrule.scale)::$(typeof(quadrule.scale))
