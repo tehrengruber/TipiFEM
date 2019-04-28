@@ -1,8 +1,5 @@
 using Base: return_types
 
-add_cell_initializer((K) -> topology_tuple_type(K, true, raw=true))
-add_cell_initializer((K) -> topology_tuple_type(K, false, raw=true))
-
 const topology_tuple_type_cache = Dict{Type, DataType}()
 
 using Base: uniontypes
@@ -36,7 +33,8 @@ end
   topology_matrix
 end
 
-@Base.pure function topology_tuple_type(::Type{K}, simple; raw=false) where K <: Cell
+@Base.pure function topology_tuple_type(@nospecialize(K), simple; warn=true)
+  warn && @warn "type-unstable version of topology_tuple_type called for cell type $(K)"
   mesh_dim = dim(K)
   ts = []
   let topology_matrix = connectivity_types(K)
@@ -53,8 +51,17 @@ end
    end
 
   T = Tuple{ts...}
-  topology_tuple_type_cache[K] = T # cache the result
   T
+end
+
+add_cell_initializer(hybrid=true) do K
+  @eval function topology_tuple_type(::Type{$(K)}, simple::Bool) where K <: Cell
+    if simple
+      $(topology_tuple_type(K, true, warn=false))
+    else
+      $(topology_tuple_type(K, false, warn=false))
+    end
+  end
 end
 
 """

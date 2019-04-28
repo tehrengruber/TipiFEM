@@ -171,6 +171,8 @@ end
 # local index of the face to which a boundary dof is attached to
 ################################################################################
 let local_face_indices = Dict(
+    # linear lagrangian finite elements on line segments
+    (Polytope"2-node line", 1) => (1, 2), # (vertices...)
     # linear lagrangian finite elements on triangles
     (Polytope"3-node triangle", 1) => (1, 2, 3), # (vertices...)
     # second order lagrangian finite elements on triangles

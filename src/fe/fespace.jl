@@ -25,7 +25,8 @@ For cell_type(M) beeing Polytope"3-node triangle" this is the following function
   dofh::D
 
   # fixed interpolation nodes / inactive degrees of freedom and their value
-  constraints::Vector{IndexMapping} # todo: use Vector{<: IndexMapping{Int}}
+  constraints::Dict{Symbol, IndexMapping}
+  #constraints::Vector{IndexMapping} # todo: use Vector{<: IndexMapping{Int}}
 
   # todo: to construct the active cells use the parent mesh
   # todo: whether the active_cells_mask mesh function is simple depends on the parent mesh
@@ -34,8 +35,19 @@ For cell_type(M) beeing Polytope"3-node triangle" this is the following function
   active_cells::ID_ITER
 
   # inactive interpolation nodes / inactive degrees of freedom
-  active_cells_mask::first(return_types(MeshFunction,
-    (Type{Union{skeleton(element_type(M))...}}, Type{Bool})))
+  active_cells_mask::active_cells_mask_type(element_type(M))
+end
+
+function active_cells_mask_type(@nospecialize(K); warn=false)
+  warn && @warn "type-unstable version of active_cells_mask_type called for cell type $(K)"
+  first(return_types(MeshFunction,
+    (Type{Union{skeleton(K)...}}, Type{Bool})))
+end
+
+# TODO: use cell_initializer (need to be adopted since the PolytopalMesh is loaded before the FE module)
+for K in TipiFEM.Meshes.registered_cell_types
+  dim(K) != 0 || continue
+  @eval Base.@pure active_cells_mask_type(::Type{$(K)}) where K <: Cell = $(active_cells_mask_type(K, warn=false))
 end
 
 #
@@ -51,7 +63,7 @@ function FESpace(basis::B, mesh::M) where {B <: FEBasis, M <: Mesh}
   active_cells = elements(mesh)
   # construct fespace
   fespace = FESpace{B, M, typeof(d), typeof(active_cells)}(basis, mesh, d,
-    Vector{IndexMapping}(), active_cells, active_cells_mask)
+    Dict{Symbol, IndexMapping}(), active_cells, active_cells_mask)
   # mark all cells active
   Ks = element_type(mesh)
   for Cs in skeleton(Ks)
@@ -72,7 +84,7 @@ function FESpace(basis::B, mesh::M, active_cells::ID_ITER) where {B <: FEBasis, 
   d = DofHandler(mesh, basis)
   # construct fespace
   fespace = FESpace{B, M, typeof(d), ID_ITER}(basis, mesh, DofHandler(mesh, basis),
-    Vector{IndexMapping}(), active_cells, active_cells_mask)
+    Dict{Symbol, IndexMapping}(), active_cells, active_cells_mask)
   # first mark all mesh cells inactive
   Ks = element_type(mesh)
   for Cs in skeleton(Ks)
@@ -136,8 +148,10 @@ function number_of_dofs(fespace::FESpace)
   end
 end
 
+using TipiFEM.Utils: sort_by_indices!
+
 "add constraints"
-function add_constraints!(fespace::FESpace, interp_indmap::IndexMapping{InterpolationNodeIndex, T}) where T <: Number
+function add_constraints!(fespace::FESpace, name::Symbol, interp_indmap::IndexMapping{<:InterpolationNodeIndex, T}) where T <: Number
   # mark all constrained cells inactive
   mark_inactive!(fespace, map(interp_node_idx -> interp_node_idx.cid, indices(interp_indmap)))
   # construct a new index mapping from constrained dof indices to their values
@@ -146,9 +160,13 @@ function add_constraints!(fespace::FESpace, interp_indmap::IndexMapping{Interpol
     for (i, v) in zip(indices(interp_indmap), values(interp_indmap))
       push!(indmap, dofh[i], v)
     end
-    push!(constraints(fespace), indmap)
+    constraints(fespace)[name] = indmap
     indmap
   end
+end
+
+function add_constraints!(fespace::FESpace, interp_indmap::IndexMapping{<:InterpolationNodeIndex})
+  add_constraints!(fespace, gensym(), interp_indmap)
 end
 
 #@generated interpolation_nodes{C <: Cell}(fespace::FESpace, ::Type{C}; result=[]) = quote
@@ -194,17 +212,17 @@ end
 #    $(expr)
 #
 #    result
-#  end
+#  endnumber_of_dofs
 #end
 
 "get all interpolation nodes on the cells `cells`"
 function interpolation_nodes(fespace::FESpace, cells::IdIterator)
   # todo: fix that interpolation nodes appear multiple times
   let mesh = mesh(fespace),
-      dofh = dofh(fespace),
       node_index_set = Set(InterpolationNodeIndex[]),
       result = IndexMapping{InterpolationNodeIndex, SVector{world_dim(mesh), real_type(mesh)}}(),
       basis = basis(fespace)
+
     foreach(decompose(cells)) do cells
       K = cell_type(cells)
       for (cid, geo) in graph(geometry(mesh, cells))
@@ -215,6 +233,28 @@ function interpolation_nodes(fespace::FESpace, cells::IdIterator)
             if !(index ∈ node_index_set)
               push!(node_index_set, index)
               push!(result, index, local_to_global(geo, coordinates(interp_node)))
+            end
+          end
+        end
+      end
+    end
+    result
+  end
+end
+
+function interpolation_node_indices(fespace::FESpace, cells::IdIterator)
+  let mesh = mesh(fespace),
+      node_index_set = Set(InterpolationNodeIndex[]),
+      result = InterpolationNodeIndex{cell_type(eltype(cells))}[], # todo use heterogenous vector if necessary
+      basis = basis(fespace)
+
+    foreach(decompose(cells)) do cells
+      K = cell_type(cells)
+      for cid in cells
+        for interp_node in interpolation_nodes(basis, K())
+          let index = index(cid, interp_node)
+            if !(index ∈ node_index_set)
+              push!(result, index)
             end
           end
         end
@@ -248,7 +288,7 @@ local interpolation node is active
   end
 
   #
-  # build an expression that processes the internal dofs
+  # build an expression that processes the boundary dofs
   #
   boundary_dofs_expr = Expr(:block)
   # now process all boundary degrees of freedom
@@ -377,7 +417,7 @@ mark_inactive!(fespace::FESpace, ids::IdIterator) = mark!(fespace, ids, state=fa
 
 function interpolate(f::Function , fespace::FESpace)
   f_int = map(f, geometry(mesh(fespace), dofs))
-  for constrain in constraints(fespace)
+  for (key, constrain) in constraints(fespace)
     f_int[domain(constrain)] = image(constrain)
   end
   # todo remove inactive cell_groups

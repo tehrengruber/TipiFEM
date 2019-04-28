@@ -17,11 +17,18 @@ macro export_mesh_interface(cell_type)
     let cell_types = typeof($(cell_type)) <: AbstractArray ? $(cell_type) : subtypes($(cell_type))
       # export cell types
       for st in cell_types
-        eval(:(export $(st.name.name)))
+        if !isa(st, Union)
+          eval(:(export $(st.name.name)))
+        end
       end
       # call cell initializers
-      for initializer in TipiFEM.Meshes.cell_initializer
+      append!(TipiFEM.Meshes.registered_cell_types, cell_types)
+      for (initializer, attributes) in TipiFEM.Meshes.cell_initializer
         for st in cell_types
+          # ignore initializers for hybrid cells
+          if isa(st, Union) && !attributes[:hybrid]
+            continue
+          end
           initializer(st)
         end
       end

@@ -1,6 +1,5 @@
 using TipiFEM.Utils: MethodNotImplemented
-# todo: we want using, but it doesn't work in v1.0
-import Base.@pure
+using Base: @pure
 
 export @Polytope_str, Polytope, vertex_count, @Id_str, @Connectivity_str, vertex, Connectivity
 
@@ -58,7 +57,7 @@ end
 # other cell related stuff
 ################################################################################
 
-include("index.jl")
+include("id.jl")
 include("connectivity.jl")
 include("geometry.jl")
 include("generators.jl")

@@ -1,3 +1,5 @@
-julia 0.5
+julia 1.0
 StaticArrays v0.5.0-
 MacroTools
+ComputedFieldTypes
+SimpleRepeatIterator

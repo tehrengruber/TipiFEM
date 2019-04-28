@@ -6,17 +6,41 @@ using TipiFEM.Utils: @generate_sisd
 
 import TipiFEM.Meshes.normal
 
-"Geometry of the reference triangle"
+"""
+  reference_element(::Polytope"3-node triangle")
+
+Geometry of the reference triangle
+"""
 function reference_element(::Polytope"3-node triangle")
   Geometry{Polytope"3-node triangle", 2, Float64}((0, 0), (1, 0), (0, 1))
 end
 
-"Geometry of the reference quadrangle"
+#function reference_element(::Polytope"6-node triangle")
+#  Geometry{Polytope"6-node triangle", 2, Float64}((0, 0), (1, 0), (0, 1), (0.5, 0), (0.5, 0.5), (0, 0.5))
+#end
+
+"""
+  reference_element(::Polytope"4-node quadrangle")
+
+Geometry of the reference quadrangle
+"""
 function reference_element(::Polytope"4-node quadrangle")
   Geometry{Polytope"4-node quadrangle", 2, Float64}((0, 0), (1, 0), (1, 1), (0, 1))
 end
 
-"Geometry of the reference edge"
+#function reference_element(::Polytope"8-node quadrangle")
+#  Geometry{Polytope"4-node quadrangle", 2, Float64}((0, 0), (1, 0), (1, 1), (0, 1), (0.5, 0), (1, 0.5), (0.5, 1), (0, 0.5))
+#end
+
+#function reference_element(::Polytope"9-node quadrangle")
+#  Geometry{Polytope"4-node quadrangle", 2, Float64}((0, 0), (1, 0), (1, 1), (0, 1), (0.5, 0), (1, 0.5), (0.5, 1), (0, 0.5), (0.5, 0.5))
+#end
+
+"""
+  reference_element(::Polytope"2-node line")
+
+Geometry of the reference edge
+"""
 function reference_element(::Polytope"2-node line")
   Geometry{Polytope"2-node line", 1, Float64}(0, 1)
 end
@@ -94,7 +118,13 @@ function refine!(mesh::Mesh, id::Id{C}) where C <: Cell
 end
 
 "Length of a line"
-volume(geo::Geometry{Polytope"2-node line"}) = norm(point(geo, 1) - point(geo, 2))
+@generated function volume(geo::Geometry{Polytope"2-node line", world_dim}) where world_dim
+  if world_dim == 1
+    :(point(geo, 2) - point(geo, 1))
+  else
+    :(norm(point(geo, 1) - point(geo, 2)))
+  end
+end
 
 "Area of a triangle"
 @inline function volume(geo::G) where G <: Geometry{Polytope"3-node triangle"}

@@ -1,3 +1,4 @@
+using SparseArrays
 using TipiFEM.Utils: @sanitycheck
 
 include("febasis.jl")
@@ -6,37 +7,7 @@ include("fespace.jl")
 include("triplets.jl")
 include("norms.jl")
 
-"""
-Assemble global stiffness matrix
-"""
-function matrix_assembler(a::Function, msh::Mesh, basis::FEBasis, dofh::AbstractDofHandler)
-  N = mapreduce(K -> number_of_cells(msh, K())*number_of_local_shape_functions(basis, K())^2, +, cell_types(msh))
-  I = Array{Int, 1}(N)
-  J = Array{Int, 1}(N)
-  V = Array{real_type(msh), 1}(N)
-  k = 1
-  map(cell_types(msh)) do K
-    n = number_of_local_shape_functions(basis, K())
-    el_matrix = element_stiffness_matrix(a, K(), basis)
-    for (cidx, geo) in graph(geometry(msh)[K])
-      # get degrees of freedom for the current element
-      dofs = dofh[cidx]
-      # distribute local/element stiffness matrix matrix
-      for i in 1:n
-        for j in 1:n
-          # todo: double check "swapped" indices
-          I[k] = dofs[j]
-          J[k] = dofs[i]
-          V[k] = el_matrix[i, j](geo)
-          k+=1
-        end
-      end
-    end
-  end
-  sparse(I, J, V)
-end
-
-function matrix_assembler(el_matrix::Function, trial_space::FESpace, test_space::FESpace)
+function matrix_assembler(el_matrix::Function, trial_space::FESpace, test_space::FESpace; matrix_type::Type=Triplets)
   # select the active cells of lowest amount from the trial and test space
   # note that the selected active cells must be a subset of the not
   #  selected active cells
@@ -46,7 +17,15 @@ function matrix_assembler(el_matrix::Function, trial_space::FESpace, test_space:
       active_cells(test_space)
     end
     # invoke the actual matrix assembler
-    matrix_assembler(el_matrix::Function, active_cells, trial_space, test_space)
+    A = matrix_assembler(el_matrix::Function, active_cells, trial_space, test_space)
+
+    if matrix_type == Triplets
+      return A
+    elseif matrix_type == SparseMatrixCSC
+      return sparse(A, number_of_dofs(test_space), number_of_dofs(trial_space))
+    else
+      error("Invalid argument matrix_type = $(matrix_type)")
+    end
   end
 end
 
@@ -71,8 +50,10 @@ function matrix_assembler(el_matrix_assembler::Function, cells::HomogeneousIdIte
       dofs = dofh[cid]
       # get active degrees of freedom
       isactive = active_dofs(trial_space, cid)
-      @sanitycheck @assert(active_dofs(trial_space, cid) == active_dofs(test_space, cid),
-        "DOFs on $(cid) that were active in the trial space where not active in the test space")
+      # in prior versions dofs belonging to dirichlet nodes in the trial space
+      #  were automatically marked inactive. However, we can just disable them
+      #@sanitycheck @assert(active_dofs(trial_space, cid) == active_dofs(test_space, cid),
+      #  "DOFs on $(cid) that were active in the trial space where not active in the test space")
       # assemble element matrix
       el_mat = element_matrix(cid, geo)
       @sanitycheck @assert length(el_mat) == number_of_local_shape_functions(basis_trial, cell_type(cells)())^2
@@ -86,6 +67,7 @@ function matrix_assembler(el_matrix_assembler::Function, cells::HomogeneousIdIte
         end
       end
     end
+    triplets
   end
 end
 
@@ -107,28 +89,6 @@ function matrix_assembler(el_matrix_assembler::Function, cells::HeterogenousIdIt
       matrix_assembler(el_matrix_assembler, cells, trial_space, test_space, triplets=triplets)
     end
     triplets
-  end
-end
-
-"incorporate constraints into the galerkin matrix and rhs vector"
-function incorporate_constraints(fespace::FESpace, galerkin_matrix, rhs_vector)
-  foreach(constraints(fespace)) do constraint
-    incorporate_constraints(constraint, galerkin_matrix, rhs_vector)
-  end
-end
-
-function incorporate_constraints(constraint::IndexMapping, galerkin_matrix, rhs_vector)
-  dof_processed = Set(Int[])
-  for (dof, v) in zip(indices(constraint), values(constraint))
-    # set diagonal entries of constrained dofs to 1
-    #@sanitycheck @assert nnz(galerkin_matrix[dof, :]) == 0 "do not test where the solution is known (at dof: $(dof))"
-    if !(dof ∈ dof_processed)
-      push!(galerkin_matrix, dof, dof, 1.)
-    end
-    push!(dof_processed, dof)
-    #galerkin_matrix[dof, dof] = 1
-    # modify rhs vector
-    rhs_vector[dof] = v
   end
 end
 
@@ -156,6 +116,74 @@ function vector_assembler(element_vector_assembler::Function, fespace::FESpace)
       end
     end
     V
+  end
+end
+
+"""
+    incorporate_constraints(fespace::FESpace, args...)
+
+Incorporate constraints imposed on the finite element space `fespace` into
+the galerkin matrix and/or rhs vector. Note that this function is just a wrapper
+extracting the constraints from the FE space, see the actual implementations of
+`incorporate_constraints` dispatching on `IndexMapping`s for more details.
+
+Note that this functions expects all rows of the galerkin matrix belonging to
+constrained dofs to be zero, i.e. by marking them inactive in the test space.
+"""
+function incorporate_constraints!(fespace::FESpace, args...)
+  for (key, constraint) in constraints(fespace)
+    incorporate_constraints!(constraint, args...)
+  end
+end
+
+"""
+    incorporate_constraints(constraint::IndexMapping, galerkin_matrix::Triplets,
+                            rhs_vector::AbstractVector)
+
+Incorporate `constraint`s into galerkin matrix and/or rhs vector, where
+`constraint` is an index mapping from dof-indices to the imposed values.
+"""
+function incorporate_constraints!(constraint::IndexMapping, galerkin_matrix::Triplets, rhs_vector::AbstractVector)
+  dof_processed = Set(Int[])
+  for (dof, v) in zip(indices(constraint), values(constraint))
+    # set diagonal entries of constrained dofs to 1
+    #@sanitycheck @assert nnz(galerkin_matrix[dof, :]) == 0 "do not test where the solution is known (at dof: $(dof))"
+    if !(dof ∈ dof_processed)
+      push!(galerkin_matrix, dof, dof, 1.)
+    end
+    push!(dof_processed, dof)
+    #galerkin_matrix[dof, dof] = 1
+    # modify rhs vector
+    rhs_vector[dof] = v
+  end
+end
+
+"""
+    incorporate_constraints!(constraint::IndexMapping, galerkin_matrix::Triplets)
+
+Incorporate `constraint`s into the galerkin matrix where `constraint` is an
+index mapping from dof-indices to the imposed values.
+"""
+function incorporate_constraints!(constraint::IndexMapping, galerkin_matrix::Triplets)
+  dof_processed = Set(Int[])
+  for dof in indices(constraint)
+    if !(dof ∈ dof_processed)
+      # set all diagonal entries belonging to constraint degrees of freedom to 1
+      push!(galerkin_matrix, dof, dof, 1.)
+    end
+    push!(dof_processed, dof)
+  end
+end
+
+"""
+    incorporate_constraints!(constraint::IndexMapping, rhs_vector::AbstractVector{<:Number, 1})
+
+Incorporate `constraint`s into the rhs vector where `constraint` is an index
+mapping from dof-indices to the imposed values.
+"""
+function incorporate_constraints!(constraint::IndexMapping, rhs_vector::AbstractVector{<:Number})
+  for (dof, v) in zip(indices(constraint), values(constraint))
+    rhs_vector[dof] = v
   end
 end
 

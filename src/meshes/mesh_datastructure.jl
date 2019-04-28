@@ -1,31 +1,109 @@
 using StaticArrays
 using SimpleRepeatIterator
 using TipiFEM.Utils: type_scatter, flatten
-export subcell, world_dim
+export subcell, world_dim, number_of_vertices
 
 # todo: add invalid flag to all cell entities
 
 using Base: OneTo
-"""
-Construct a generic mesh containing `K` cells.
 
-```julia
-Mesh(Polygon"3-node triangle")
-Mesh(Union{Polygon"3-node triangle", Polygon"4-node quadrangle"})
+mutable struct MeshCacheEntry
+  valid::Bool
+  data
+end
+
+"""
+
 ```
+  Mesh(::Type{K}; simple=Val{true}, world_dim=dim(K))
+```
+
+Initialize a mesh containing `K` cells. Note that `K` may also be a union of
+(compatible) cell types.
+
+# Definitions
+
+We say that a mesh is `simple` if the the mesh function storing the vertex
+coordinates is simple, i.e. its domain is a UnitRange object. This property
+enables adding vertices to the mesh without explicitly allocating or specifying
+vertex ids.
+
+# Examples
+
+__Mesh initialization with different element types__
+```
+Mesh(Polytope"2-node line") # 1D
+Mesh(Polytope"3-node triangle") # 2D
+Mesh(Union{Polytope"3-node triangle", Polytope"4-node quadrangle"}) # 2D hybrid
+```
+
+__Hybrid mesh construction__
+```
+# construct mesh instance
+julia> mesh = Mesh(Union{Polytope"3-node triangle",Polytope"4-node quadrangle"});
+TipiFEM.Mesh
+  world dim: 2
+  mesh dimension: 2
+  cell types: Polytope"3-node triangle", Polytope"4-node quadrangle"
+   Codim    Dim     #cells
+       0      2          0
+       1      1          0
+       2      0          0
+  topology:
+    → | 0  1  2
+    --|--------
+    0 | 0  0  0
+    1 | 0  0  0
+    2 | 1  0  0
+
+# add some vertices
+julia> add_vertex!(mesh, 0, 0);
+julia> add_vertex!(mesh, 0, 1);
+julia> add_vertex!(mesh, 1, 1);
+julia> add_vertex!(mesh, 1, 0);
+julia> add_vertex!(mesh, 3, 0.5)
+5 element HomogenousMeshFunction Polytope"1-node point" → StaticArrays.SArray{Tuple{2},Float64,1,2}
+ (1, [0.0, 0.0])
+ (2, [0.0, 1.0])
+ (3, [1.0, 1.0])
+ (4, [1.0, 0.0])
+ (5, [3.0, 0.5])
+
+# query the number of cells
+julia> number_of_cells(mesh, Polytope"1-node point")
+5
+
+# connect vertices
+julia> add_cell!(mesh, Polytope"4-node quadrangle", 1, 2, 3, 4);
+julia> add_cell!(mesh, Polytope"3-node triangle", 2, 5, 3)
+2 element HeterogenousMeshFunction Union{Polytope"3-node triangle", Polytope"4-node quadrangle"} → Union{Connectivity{Polytope"3-node triangle",Polytope"1-node point",3,3}, Connectivity{Polytope"4-node quadrangle",Polytope"1-node point",4,4}}
+├─ 1 element HomogenousMeshFunction Polytope"3-node triangle" → Connectivity{Polytope"3-node triangle",Polytope"1-node point",3,3}
+|   (1, Id{Polytope"1-node point"}[2, 5, 3])
+├─ 1 element HomogenousMeshFunction Polytope"4-node quadrangle" → Connectivity{Polytope"4-node quadrangle",Polytope"1-node point",4,4}
+|   (1, Id{Polytope"1-node point"}[1, 2, 3, 4])
+
+# populate topology (restricted bidirectional by default)
+julia> populate_connectivity!(mesh);
+```
+
 """
 @computed struct Mesh{K, world_dim, REAL_ <: Real, simple, PM}
-  nodes::HomogenousMeshFunction{vertex(K), SVector{world_dim, REAL_},
-    simple ? OneTo{Id{vertex(K)}} : Vector{Id{vertex(K)}}, Vector{SVector{world_dim, REAL_}}}
+  nodes::HomogenousMeshFunction{vertex(K), world_dim==1 ? REAL_ : SVector{world_dim, REAL_},
+    simple ? OneTo{Id{vertex(K)}} : Vector{Id{vertex(K)}}, Vector{world_dim==1 ? REAL_ : SVector{world_dim, REAL_}}}
   topology::fulltype(MeshTopology{K, simple})
   attributes::Dict{Any, MeshFunction}
   cell_groups::Dict{Any, Vector} # todo: use Vector{<:Id}
+  cache::Dict{Symbol, MeshCacheEntry}
   parent::PM
 
   function Mesh(parent::PM=nothing)
     mesh = new{K, world_dim, REAL_, simple, PM}(
-      MeshFunction(vertex(K), SVector{world_dim, REAL_}, Val{simple}()),
-      MeshTopology(K, Val{simple}()), Dict{Symbol, MeshFunction}(), Dict{Any, Array{Cell, 1}}(),
+      MeshFunction(vertex(K), world_dim==1 ? REAL_ : SVector{world_dim, REAL_}, Val{simple}()),
+      MeshTopology(K, Val{simple}()),
+      Dict{Symbol, MeshFunction}(),
+      Dict{Any, Array{Cell, 1}}(),
+      Dict{Symbol, MeshCacheEntry}(),
+      #Dict{Symbol, Any}(),
       parent)
     mark_populated!(mesh.topology, dim_t(K), Dim{0}())
     #attributes(msh)[:proper] = true
@@ -33,37 +111,168 @@ Mesh(Union{Polygon"3-node triangle", Polygon"4-node quadrangle"})
   end
 end
 
-Mesh(::Type{K}; simple=Val{true}) where K <: Cell = Mesh{K, dim(K), Float64, simple==Val{true}, Nothing}()
+@generated function Mesh(::Type{K}; simple=Val{true}(), world_dim=nothing) where K <: Cell
+  # parse world dimension argument
+  if world_dim == Nothing
+    world_dim_expr = :(dim(K))
+  elseif world_dim <: Val && isa(tparam(world_dim, 1), Number)
+    world_dim_expr = tparam(world_dim, 1)
+  else
+    throw("Type of `world_dim` argument must be of type Val{N} with N <: Integer")
+  end
 
-"is the mesh simple"
+  :(Mesh{K, $(world_dim_expr), Float64, simple==Val{true}(), Nothing}())
+end
+
+mesh_cache_initializer = Dict{Symbol, Function}()
+
+function add_cache_initializer(f::Function, s::Symbol)
+  mesh_cache_initializer[s] = f
+end
+
+function cache_entry(msh::Mesh, s::Symbol)
+  if !haskey(msh.cache, s) || !msh.cache[s].valid
+    data = mesh_cache_initializer[s](msh)
+    msh.cache[s] = MeshCacheEntry(false, data)
+    return data
+  end
+
+  msh.cache[s].data
+end
+
+# Default cache initializers
+#
+# :unique_cell_visitor cache - mesh function from all cells to symbols
+#  usually used in loops over a set of cells whose subcells shall only be
+#  processed once. The idea is to generate a unique symbol in the beginning
+#
+# mesh.cache[:unique_cell_visitor]
+# for cid in connectivity(mesh, some_cells)
+#   for skeleton(cid)
+#
+#
+#
+
+function subcells(mesh::Mesh, cells::IdIterator)
+  let subcells = HeterogenousVector{eltype(cells)}()
+    visitor_id = mesh.cache[:unique_cell_visitor].visitor_id
+    foreach(cells) do cid
+      if mesh.cache[:unique_cell_visitor][cid] != visitor_id
+        push!(subcells[cell_type(cid)], cid)
+        mesh.cache[:unique_cell_visitor][cid] = visitor_id
+      end
+    end
+    subcells
+  end
+end
+
+# ===============================================================================
+# Mesh metadata accessors
+# ===============================================================================
+
+"""
+    real_type(::Union{Mesh, Type{<:Mesh}})
+
+Return type used for calculations with real numbers.
+"""
+@typeinfo real_type(M::Type{<:Mesh}) = tparam(M, 3)
+
+"""
+    issimple(mesh::Union{Mesh, Type{<:Mesh}})
+
+Determine whether the `mesh` is simple.
+"""
 @typeinfo issimple(M::Type{<:Mesh}) =  tparam(M, 4)
 
-"get type of the parent mesh"
+"""
+    parent_type(mesh::Union{Mesh, Type{<:Mesh}})
+
+Return the type of the parent mesh.
+"""
 @typeinfo parent_type(M::Type{<:Mesh}) = tparam(M, 5)
 
-"does the mesh has a parent"
+"""
+    hasparent(mesh::Union{Mesh, Type{<:Mesh}})
+
+Determine whether the `mesh` has a parent.
+"""
 @typeinfo hasparent(M::Type{<:Mesh}) = parent_type(M) != Void
 
-import Base.parent
+"""
+    world_dim(mesh::Union{Mesh, Type{<:Mesh}})
 
-parent(mesh::Mesh) = mesh.parent
+Dimension of the ambient space
 
-"dimension of the ambient space"
+```
+# create a mesh with world dimension 3 and topological dimension 1
+julia> mesh=Mesh(Polytope"2-node line", world_dim=Val{3}())
+julia> world_dim(mesh)
+3
+```
+"""
 @typeinfo world_dim(M::Type{<:Mesh}) = tparam(M, 2)
 
-"type of cells in `M` with (co)-dimension `d`"
+"""
+    mesh_dim(M::Union{Mesh, Type{<:Mesh}})
+
+dimension of codimension zero cells
+"""
+@typeinfo mesh_dim(M::Type{<:Mesh}) = dim(element_type(M))
+
+"""
+    cell_type(mesh::Union{Mesh, Type{<:Mesh}}, d)
+
+Type of cells with (co)-dimension `d`.
+"""
 @typeinfo cell_type(M::Type{<:Mesh}, d) = let K = tparam(M, 1)
   subcell(K, d)
 end
 
+"""
+    element_type(mesh::Union{Mesh, Type{<:Mesh}})
+
+Element type, i.e. type of codim zero cells
+
+```
+julia> element_type(Mesh(Polytope"3-node triangle"))
+Polytope"3-node triangle"
+```
+"""
 @typeinfo element_type(M::Type{<:Mesh}) = let K = tparam(M, 1)
   K
 end
 
-"type of cells in `M` with (co)-dimension `d` as a tuple"
+"""
+    cell_types(M::Type{<:Mesh}, d=Codim{0}())
+
+Type of cells in `M` as a tuple, with `d` the (co)-dimension
+
+```
+julia> cell_types(Mesh(Union{Polytope"3-node triangle", Polytope"4-node quadrangle"}))
+(Polytope"3-node triangle", Polytope"4-node quadrangle")
+```
+"""
 @typeinfo cell_types(M::Type{<:Mesh}, d=Codim{0}()) = (Base.uniontypes(cell_type(M, d))...,)
 
-"Number of `d` dimensional cells in `msh`"
+# ===============================================================================
+# Mesh field accessors
+# ===============================================================================
+import Base: parent
+
+parent(mesh::Mesh) = mesh.parent
+
+topology(mesh) = mesh.topology
+
+
+# ===============================================================================
+# Mesh information
+# ===============================================================================
+
+"""
+    number_of_cells(msh::Mesh, d::Union{Dim, Codim})
+
+Number of `d` dimensional cells in `msh`
+"""
 @dim_dispatch function number_of_cells(msh::Mesh{K}, d::Codim) where K <: Cell
   # if the number of vertices is requested we have to look at the nodes arrays
   if complement(element_type(msh), d)==Dim{0}()
@@ -74,10 +283,25 @@ end
   end
 end
 
-"Number of cells with codimension 0"
+"""
+    number_of_vertices(msh::Mesh)
+
+Number of vertices in `msh`
+"""
+number_of_vertices(msh::Mesh) = number_of_cells(msh, Dim{0}())
+
+"""
+    number_of_elements(msh::Mesh)
+
+Number of codim zero cells in `msh`
+"""
 number_of_elements(msh::Mesh) = number_of_cells(msh, Codim{0}())
 
-"Number of cells of type `T` in `msh`"
+"""
+    number_of_cells(msh::Mesh, ::Union{T, Type{T}})
+
+Number of cells of type `T` in `msh`
+"""
 function number_of_cells(msh::Mesh, ::Union{T, Type{T}}) where T <: Cell
   if dim(T)==0
     # return the number of vertices
@@ -91,65 +315,123 @@ function number_of_cells(msh::Mesh, ::Union{T, Type{T}}) where T <: Cell
   end
 end
 
-function dumpmesh(msh::Mesh{K}) where K <: Cell
-  # show the usual mesh information
-  display(msh)
-  # show all nodes
-  println("  Nodes: ")
-  for (nid, coordinates) in graph(vertex_coordinates(msh))
-    println("    $(nid) ↦ $(coordinates)")
-  end
-  println()
-  # show all cells
-  for d in dim(K):-1:1
-    println("  $(d) dimensional cells:")
-    for (cid, cell_conn) in graph(connectivity(msh, Dim{d}(), Dim{0}()))
-      println("   $(cid) ↦ $(cell_conn)")
-    end
-    println()
-  end
-end
+# ===============================================================================
+# Mesh topology
+# ===============================================================================
 
-"dimension of codimension zero cells"
-@typeinfo mesh_dim(M::Type{<:Mesh}) = dim(element_type(M))
-
-"type used for calculations with real numbers"
-@typeinfo real_type(M::Type{<:Mesh}) = tparam(M, 3)
-
-topology(mesh) = mesh.topology
-
-function set_connectivity!(mesh, d1, d2, mf::MeshFunction)
-  # todo: check type of the mesh function
-  mesh.topology[Dim{d1}(), Dim{d2}()] = mf
-end
+#function set_connectivity!(mesh, d1::Int, d2::Int, mf::MeshFunction)
+#  # todo: check type of the mesh function
+#  mesh.topology[Dim{d1}(), Dim{d2}()] = mf
+#end
 
 """
-connectivity of i-cells with j-cells
+    connectivity(mesh::Mesh{K}, d1::Dim{i}, d2::Dim{j}) where {K <: Cell, i, j}
 
-this represents the incedence relation of i-cells with j-cells
+Return the connectivity of `i` dimensional cells with `j` dimensional cells, i.e.
+a representation of the incidence relation `i` → `j`
 """
 @dim_dispatch function connectivity(mesh::Mesh{K}, d1::Dim{i}, d2::Dim{j}) where {K <: Cell, i, j}
   topology(mesh)[d1, d2]
 end
 
+"""
+    connectivity(mesh::Mesh{K}, ::C, j::Dim) where {K <: Cell, C <: Cell}
+
+Return the connectivity of cells of type `C` with `j` dimensional cells.
+"""
 @dim_dispatch function connectivity(mesh::Mesh{K}, ::C, j::Dim) where {K <: Cell, C <: Cell}
   #assert(subcell(C1, dim_t(C2)) == C2)
   connectivity(mesh, dim_t(C), j)[C]
 end
 
+"""
+    connectivity(mesh::Mesh{K}, ::C, j::Dim) where {K <: Cell, C <: Cell}
+
+Return the connectivity of cells of type `C` with vertices, i.e. for each `C`
+cell its vertices.
+"""
 function vertex_connectivity(mesh::Mesh, ::C) where C <: Cell
   connectivity(mesh, C(), subcell(C, Dim{0}())())
 end
 
-"add vertex with the given coordinates to the mesh"
-add_vertex!(mesh, coords::Number...) = add_vertex!(mesh, SVector{world_dim(mesh), real_type(mesh)}(coords))
+"""
+    vertex_connectivity(mesh::Mesh)
 
-function add_vertex!(mesh, coords::SVector)
+Return the connectivity of all elements with their vertices, i.e. for each
+element its vertices.
+"""
+vertex_connectivity(mesh::Mesh) = connectivity(mesh, Codim{0}(), Dim{0}())
+
+"""
+    connectivity(mesh::M, ids::IdIterator{C}) where {C <: Cell, M <: Mesh}
+
+Return the connectivity of all cells contained in `ids` with their vertices.
+"""
+function connectivity(mesh::M, ids::HomogeneousIdIterator{C}) where {C <: Cell, M <: Mesh}
+  @assert typeof(C) == DataType "Only a single cell type allowed"
+  let vertex_coordinates = vertex_coordinates(mesh),
+      mesh_conn = connectivity(mesh, C(), Dim{0}())
+    mesh_geo = MeshFunction(C, Geometry{C, world_dim(M), real_type(M)}, Val{false}())
+    #resize!(mesh_geo, length(ids))
+    for id in ids
+      push!(mesh_geo, id, map(vidx -> vertex_coordinates[vidx], mesh_conn[id]))
+    end
+    mesh_geo
+  end
+end
+
+function connectivity(mesh::Mesh, ids::HeterogenousIdIterator)
+  compose(map(ids -> geometry(mesh, ids), decompose(ids)))
+end
+
+# ===============================================================================
+# Mesh construction
+# ===============================================================================
+
+"""
+  add_vertex!(mesh, coords::Number...)
+  add_vertex!(mesh, coords::Tuple{Vararg{<:Number}})
+  add_vertex!(mesh, coords::SVector{N, <: Number})
+
+Add new vertex with the given coordinates to the mesh
+
+```julia
+# Add vertex with coordinates (0., 1.)
+add_vertex!(mesh, 0., 1.)
+add_vertex!(mesh, (0., 1.))
+add_vertex!(mesh, SVector{3, Float64}(0., 1.))
+```
+"""
+add_vertex!(mesh::Mesh, coords::Number...) = add_vertex!(mesh, coords)
+
+# add vertex to mesh with world dimension one
+add_vertex!(mesh::Mesh{<:Cell, 1}, coords::Tuple{<:Number}) = push!(mesh.nodes, coords[1])
+
+# add vertex to mesh with world dimension at least two
+function add_vertex!(mesh::Mesh, coords::Tuple{<:Number, <:Number, Vararg{<:Number}})
+  add_vertex!(mesh, SVector{world_dim(mesh), real_type(mesh)}(coords))
+end
+
+# add vertex to mesh with coordinates given as a static vector
+function add_vertex!(mesh::Mesh{<:Cell, world_dim}, coords::SVector{world_dim}) where world_dim
+  @assert world_dim > 1
   @inbounds push!(mesh.nodes, coords)
 end
 
-add_vertex!(mesh, i::Id, coords::Number...) = add_vertex!(mesh, i, SVector{world_dim(mesh), real_type(mesh)}(coords))
+# add vertex with prescribed id to mesh
+add_vertex!(mesh::Mesh, i::Id, coords::Number...) = add_vertex!(mesh, i, coords)
 
+# add vertex with prescribed id to mesh with world dimension one
+function add_vertex!(mesh::Mesh{<:Cell, world_dim}, i::Id, coords::Tuple{<:Number}) where world_dim
+  push!(mesh.nodes, i, coords[1])
+end
+
+# add vertex with prescribed id to mesh with world dimension at least two
+function add_vertex!(mesh::Mesh, i::Id, coords::Tuple{<:Number, <:Number, Vararg{<:Number}})
+  add_vertex!(mesh, i, SVector{world_dim(mesh), real_type(mesh)}(mesh)(coords))
+end
+
+# add vertex with prescribed id to mesh given as static vector
 function add_vertex!(mesh, i::Id, coords::SVector)
   @inbounds push!(mesh.nodes, i, coords)
 end
@@ -185,13 +467,11 @@ end
   i == Dim{0} ? :(domain(vertex_coordinates(mesh))) : :(domain(connectivity(mesh, dim_t(K), Dim{0}())[K]))
 end
 
-cells(mesh::Mesh, ::K) where K <: Cell = _cells(mesh, dim_t(K), K())
-
 @generated function cells(mesh::Mesh, i::Dim)
   i == Dim{0} ? :(domain(vertex_coordinates(mesh))) : :(domain(connectivity(mesh, i, Dim{0}())))
 end
 
-import Base.eltype
+cells(mesh::Mesh, ::K) where K <: Cell = _cells(mesh, dim_t(K), K())
 
 "Return the vertex ids of the nodes"
 vertices(mesh::Mesh) = domain(mesh.nodes)
@@ -228,14 +508,18 @@ Return geometry of all cells with ids in `ids`
 """
 function geometry(mesh::M, ids::HomogeneousIdIterator{C}) where {C <: Cell, M <: Mesh}
   @assert typeof(C) == DataType "Only a single cell type allowed"
-  let vertex_coordinates = vertex_coordinates(mesh),
-      mesh_conn = connectivity(mesh, C(), Dim{0}())
-    mesh_geo = MeshFunction(C, Geometry{C, world_dim(M), real_type(M)}, Val{false}())
-    #resize!(mesh_geo, length(ids))
-    for id in ids
-      push!(mesh_geo, id, map(vidx -> vertex_coordinates[vidx], mesh_conn[id]))
+  if dim(C)==0
+    return vertex_coordinates(mesh)
+  else
+    let vertex_coordinates = vertex_coordinates(mesh),
+        mesh_conn = connectivity(mesh, C(), Dim{0}())
+      mesh_geo = MeshFunction(C, Geometry{C, world_dim(M), real_type(M)}, Val{false}())
+      #resize!(mesh_geo, length(ids))
+      for id in ids
+        push!(mesh_geo, id, map(vidx -> vertex_coordinates[vidx], mesh_conn[id]))
+      end
+      mesh_geo
     end
-    mesh_geo
   end
 end
 
@@ -313,16 +597,20 @@ end
 Given a predicate `pred` taking a cell geometry tag all vertices for which
 `pred` returns true
 """
-function tag_vertices(pred::Function, mesh::Mesh, vertex_ids::Array{Id}, tag)
-  tagged_vertices = Array{Id{vertex_type(element_type(mesh))}}()
+function tag_vertices!(pred::Function, mesh::Mesh, vertex_ids::TypedIdIterator, tag)
+  tagged_vertices = Vector{Id{vertex(element_type(mesh))}}()
   let vertex_coordinates = vertex_coordinates(mesh)
     for vid in vertex_ids
       if pred(vertex_coordinates[vid])
-        push!(tagged_nodes, vid)
+        push!(tagged_vertices, vid)
       end
     end
   end
   cell_groups(mesh)[tag] = tagged_vertices
+end
+
+function tag_vertices!(pred::Function, msh::Mesh, tag)
+  tag_vertices!(pred, msh, vertices(msh), tag)
 end
 
 """
@@ -338,7 +626,7 @@ function boundary(mesh::Mesh{K, world_dim, REAL_}) where {K<:Cell, world_dim, RE
   # the number of vertices of all cells on the boundary
   N = vertex_count(facet(K))*length(boundary_cells)
   # the ids of all vertices
-  vertices = Vector{Id{vertex(K)}}(N)
+  vertices = Vector{Id{vertex(K)}}(undef, N)
   k=1
   for cid in boundary_cells
     el_conn = el_mesh_conn[cid]
@@ -390,7 +678,26 @@ function extract(mesh::Mesh{K, world_dim, REAL_}, cells::HomogeneousIdIterator) 
   extracted_mesh
 end
 
-function populate_connectivity!(msh::Mesh{Ks}) where Ks <: Cell
+populate_connectivity!(msh::Mesh) = _populate_connectivity!(msh, Val{mesh_dim(msh)}())
+
+function _populate_connectivity!(msh::Mesh{Ks}, mesh_dim::Val{1}) where Ks <: Cell
+  cid_min = vertex_connectivity(msh)[1][1]
+  cid_max = vertex_connectivity(msh)[1][2]
+
+  for (cid, conn) in graph(vertex_connectivity(msh))
+    if conn[1] < cid_min
+      cid_min = conn[1]
+    end
+    if conn[2] > cid_max
+      cid_max = conn[2]
+    end
+  end
+
+  cell_groups(msh)[:boundary] = [cid_min, cid_max]
+  msh
+end
+
+function _populate_connectivity!(msh::Mesh{Ks}, mesh_dim::Val{2}) where Ks <: Cell
   facet_conn_t = Connectivity{facet(Ks), subcell(Ks, Dim{0}())}
   # clear connectivity (in case the connectivity is already populated)
   clear_connectivity!(topology(msh), Codim{0}(), Codim{1}())
@@ -678,7 +985,7 @@ end
 #  let edges=topology(msh)[Codim{1}(), Dim{0}(), true]
 #    println(boundary_edge_count)
 #    @assert(mapreduce(K -> facet_count(K)*number_of_cells(msh, K),
-#                     +, cell_types(msh))+boundary_edge_count == 2*length(edges),
+#                     +, cell_types(msh))+boundary_edge_count == 2*length(edges),geometry
 #            "mesh topology integrity check 1 failed")
 #    @assert(length(boundary_edge_ids) == boundary_edge_count,
 #            "mesh topology integrity check 2 failed")

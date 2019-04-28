@@ -1,6 +1,30 @@
 import Base.show
 import Printf: @sprintf
 
+"""
+    dumpmesh(msh::Mesh)
+
+Display all metadata, topological- and geometrical information of the given mesh
+"""
+function dumpmesh(msh::Mesh{K}) where K <: Cell
+  # show the usual mesh information
+  display(msh)
+  # show all nodes
+  println("  Nodes: ")
+  for (nid, coordinates) in graph(vertex_coordinates(msh))
+    println("    $(nid) ↦ $(coordinates)")
+  end
+  println()
+  # show all cells
+  for d in dim(K):-1:1
+    println("  $(d) dimensional cells:")
+    for (cid, cell_conn) in graph(connectivity(msh, Dim{d}(), Dim{0}()))
+      println("   $(cid) ↦ $(cell_conn)")
+    end
+    println()
+  end
+end
+
 function show(io::IO, ::MIME"text/plain", mesh_topology::MeshTopology{K}; simple=false, indent=0) where K <: Cell
   mesh_dim=dim(K)
   let indent=isa(indent, Int) ? repeat(" ", indent) : indent,

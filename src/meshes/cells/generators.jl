@@ -1,4 +1,6 @@
-"""Generate face_count(::Type{T}, ::Type{...}) methods for a cell T"""
+"""
+Generate face_count(::Type{T}, ::Type{...}) methods for a cell T
+"""
 function generate_face_count_methods(::Type{T}) where T <: Cell
   dim(T) != 0 || return # vertices have no faces
   expr = Expr(:block)

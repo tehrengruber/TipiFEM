@@ -58,13 +58,18 @@ Base.@propagate_inbounds function getindex(geo::Geometry{K, world_dim, REAL_, _}
 end
 
 @propagate_inbounds @generated function point(geo::Geometry, i::Int)
-  expr = Expr(:call, SVector{world_dim(geo), real_type(geo)})
-  for j in 1:world_dim(geo)
-    push!(expr.args, :(geo[i+$((j-1)*size(geo, 1))]))
-  end
-  quote
-    @_propagate_inbounds_meta
-    $(expr)
+  if world_dim(geo) == 1 # in 1d we just return the a scalar
+    @assert size(geo, 2)==1
+    :(geo[i])
+  else
+    expr = Expr(:call, SVector{world_dim(geo), real_type(geo)})
+    for j in 1:world_dim(geo)
+      push!(expr.args, :(geo[i+$((j-1)*size(geo, 1))]))
+    end
+    quote
+      @_propagate_inbounds_meta
+      $(expr)
+    end
   end
 end
 

@@ -95,6 +95,7 @@ degrees of freedom on the cell
     # process internal degrees of freedom
     for j in 0:multiplicity(dofh.basis, K())-1
       @inbounds result[pos] = offset(dofh, K())+convert(Int, el_idx)+j
+      pos+=1
     end
     result
   end

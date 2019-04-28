@@ -14,7 +14,8 @@ export Meshes, PolytopalMesh
 export FEBasis, FESpace, interpolation_nodes, add_constraints!, mark_inactive!,
        constraints, number_of_local_shape_functions, local_shape_functions,
        grad_local_shape_functions, number_of_dofs, matrix_assembler,
-       vector_assembler, incorporate_constraints, l2_norm, dofh
+       vector_assembler, incorporate_constraints!, l2_norm, dofh,
+       interpolation_node_indices
 
 include("utils/utils.jl")
 include("meshes/meshes.jl")

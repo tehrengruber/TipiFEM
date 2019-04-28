@@ -86,6 +86,7 @@ graph(mf::MeshFunction) = GraphIterator(domain(mf), image(mf))
 eltype(mf::MeshFunction) = eltype(image(mf))
 length(mf::MeshFunction) = length(image(mf))
 iterate(mf::MeshFunction, state) = iterate(image(mf), state)
+iterate(mf::MeshFunction) = iterate(image(mf))
 
 getindex(mf::MeshFunction, i::Id) = throw(MethodNotImplemented())
 getindex(mf::MeshFunction, i::Id, j::Int) = mf[i][j]
@@ -99,6 +100,13 @@ end
 
 "Transform the image of the mesh function `mf` by applying `f` to each element"
 map(f::Function, mf::MeshFunction) = MeshFunction(domain(mf), map(f, image(mf)))
+
+import Base: map!
+function map!(f::Function, dest::MeshFunction, coll::MeshFunction)
+  @assert domain(dest) === domain(coll)
+  map!(f, image(dest), image(coll))
+  dest
+end
 
 """
 For a set of mesh functions return a mesh function of tuples, where the
@@ -198,7 +206,7 @@ end
     quote
       @assert isa(simple, Bool)
       indices = $(simple==true ? :(OneTo{Id{K}}(0)) : :(Vector{Id{K}}()))
-      values = Array{fulltype(V), 1}()
+      values = Vector{fulltype(V)}()
       HomogenousMeshFunction{K, V}(indices, values)
     end
 end
@@ -283,9 +291,9 @@ function sort(mf::HomogenousMeshFunction; kwargs...)
   end
   # get indices of the sorted sequence
   perm = sortperm(image(mf); kwargs...)
-  # alocate new arrays for the indices and values
-  indices = Array{idxtype(mf), 1}(length(mf))
-  values = Array{eltype(mf), 1}(length(mf))
+  # allocate new arrays for the indices and values
+  indices = Array{idxtype(mf), 1}(undef, length(mf))
+  values = Array{eltype(mf), 1}(undef, length(mf))
   for (ridx, perm_idx) in zip(1:length(mf), perm)
     indices[ridx] = domain(mf)[perm_idx]
     values[ridx] = image(mf)[perm_idx]
