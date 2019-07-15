@@ -1,6 +1,6 @@
 import Base: eltype, length, getindex, append!, push!,
-              sort, getindex, setindex!, size, map, zip, eltype, iteratorsize,
-              iteratoreltype, empty!, iterate
+              sort, getindex, setindex!, size, map, zip, eltype,
+              empty!, iterate
 
 export domain, image, graph, idxtype, cell_type, reserve, indices
 
@@ -38,7 +38,7 @@ find_appropriate_mesh_function(::UnionAll, ::Type) = GenericMeshFunction
 """
 Construct a mesh function with domain `indices` and image `values`
 """
-function MeshFunction(indices::II, values::VI) where {II <: Union{AbstractArray, AbstractRange}, VI}
+function MeshFunction(indices::II, values::VI) where {II <: Union{AbstractArray, AbstractRange, HeterogenousIterator}, VI}
   length(size(values)) == 1 || error("MeshFunctions may only be initialized from 1-dimensional arrays")
   let K = cell_type(eltype(indices)), V = fulltype(eltype(values))
     find_appropriate_mesh_function(K, V){K, V}(indices, values)
@@ -56,14 +56,14 @@ end
 #todo: rename into compose
 compose(mfs::MeshFunction...) = HeterogenousMeshFunction(mfs)
 
-import Base: length, size, indices, eltype, map, foreach, iteratorsize, iteratoreltype, eltype
-
+import Base: length, size, indices, eltype, map, foreach, eltype
+import Base.Iterators: IteratorSize, IteratorEltype
 struct GraphIterator{II, VI}
   indices::II
   values::VI
 end
 
-length(z::GraphIterator) = Base.Iterators._min_length(z.indices, z.values, iteratorsize(z.indices), iteratorsize(z.values))
+length(z::GraphIterator) = Base.Iterators._min_length(z.indices, z.values, IteratorSize(z.indices), IteratorSize(z.values))
 size(z::GraphIterator) = promote_shape(size(z.indices), size(z.values))
 indices(z::GraphIterator) = promote_shape(indices(z.indices), indices(z.values))
 eltype(::Type{GraphIterator{I1,I2}}) where {I1,I2} = Tuple{eltype(I1), eltype(I2)}
@@ -72,8 +72,8 @@ iterate(iter::GraphIterator, state) = iterate(zip(iter.indices, iter.values), st
 map(f::Function, z::GraphIterator) = MeshFunction(z.indices, map(f, z.indices, z.values))
 foreach(f::Function, z::GraphIterator) = foreach(f, z.indices, z.values)
 
-iteratorsize(::Type{GraphIterator{I1,I2}}) where {I1,I2} = Base.Iterators.zip_iteratorsize(iteratorsize(I1),iteratorsize(I2))
-iteratoreltype(::Type{GraphIterator{I1,I2}}) where {I1,I2} = Base.Iterators.and_iteratoreltype(iteratoreltype(I1),iteratoreltype(I2))
+IteratorSize(::Type{GraphIterator{I1,I2}}) where {I1,I2} = Base.Iterators.zip_iteratorsize(IteratorSize(I1),IteratorSize(I2))
+IteratorEltype(::Type{GraphIterator{I1,I2}}) where {I1,I2} = Base.Iterators.and_iteratoreltype(IteratorEltype(I1),IteratorEltype(I2))
 
 graph(mf::MeshFunction) = GraphIterator(domain(mf), image(mf))
 @typeinfo idxtype(::Type{MeshFunction{K, V}}) where {K, V} = Union{map(K -> Id{K}, uniontypes(K))...}
@@ -97,9 +97,6 @@ function size(mf::MeshFunction)
   @assert size(domain(mf)) == size(image(mf))
   size(domain(mf))
 end
-
-"Transform the image of the mesh function `mf` by applying `f` to each element"
-map(f::Function, mf::MeshFunction) = MeshFunction(domain(mf), map(f, image(mf)))
 
 import Base: map!
 function map!(f::Function, dest::MeshFunction, coll::MeshFunction)
@@ -258,6 +255,42 @@ function setindex!(mf::HomogenousMeshFunction{K, V}, v, i::Int, j::Int) where {K
   unsafe_store!(convert(Ptr{eltype(eltype(mf))}, pointer(image(mf), i)), v, j)
   v
 end
+
+import Base: ∪
+
+@generated function ∪(mfs::HomogenousMeshFunction{<:Cell, V}...) where V
+  #length(mapreduce(domain, ∩, mfs)) == 0 || error("Union of two MeshFunctions not allowed for overlapping domains")
+  mfs_by_type = Dict{Type, Vector{Int}}()
+  for (i, mf) in enumerate(mfs)
+    if !haskey(mfs_by_type, cell_type(mf))
+      mfs_by_type[cell_type(mf)] = []
+    end
+    push!(mfs_by_type[cell_type(mf)], i)
+  end
+  mf_exprs=[]
+  for (cell_type, is) in mfs_by_type
+    # if multiple mesh functions have the same cell type union them first
+    #  (i.e. by calling ∪(mfs::HomogenousMeshFunction{K, V}...) where K <: Cell)
+    expr = if length(is) > 1
+      expr = Expr(:call, :∪)
+      for i in is
+        push!(expr.args, :(mfs[$(i)]))
+      end
+      expr
+    else
+      :(mfs[$(is[1])])
+    end
+    push!(mf_exprs, expr)
+  end
+  Expr(:call, :HeterogenousMeshFunction, Expr(:tuple, mf_exprs...))
+end
+
+function ∪(mfs::HomogenousMeshFunction{K, V}...) where {K<:Cell, V}
+  HomogenousMeshFunction(vcat(domain.(mfs)...), vcat(image.(mfs)...))
+end
+
+"Transform the image of the mesh function `mf` by applying `f` to each element"
+map(f::Function, mf::HomogenousMeshFunction) = MeshFunction(domain(mf), map(f, image(mf)))
 
 using SimpleRepeatIterator
 
@@ -565,6 +598,9 @@ function empty!(mf::HeterogenousMeshFunction)
   end
 end
 
+"Transform the image of the mesh function `mf` by applying `f` to each element"
+map(f::Function, mf::HeterogenousMeshFunction) = compose(map(hmf -> map(f, hmf), decompose(mf)))
+
 """
 Returns an mesh function containing only cells of type T
 
@@ -628,8 +664,6 @@ import Base.setindex!
     mf1
   end
 end
-
-getindex(mf::HeterogenousMeshFunction, idx::Id{T}) where {T <: Cell} = mf[T][idx]
 
 function push!(mf::HeterogenousMeshFunction, ::Union{Type{K}, K}, v::T) where {K <: Cell, T}
   push!(mf[K], v)

@@ -81,6 +81,7 @@ for id in keys(polytope_ids)
 		@Base.pure vertex_count(::Polytope{$(id)}) = $(polytope_vertex_count[id])
 		@Base.pure vertex_count(::Type{Polytope{$(id)}}) = $(polytope_vertex_count[id])
 
+# TODO: generate automatically using facets(...)
 		@Base.pure face_count(::Polytope{$(id)}, ::Type{Polytope"1-node point"}) = $(polytope_vertex_count[id])
 		@Base.pure face_count(::Type{Polytope{$(id)}}, ::Type{Polytope"1-node point"}) = $(polytope_vertex_count[id])
 	end

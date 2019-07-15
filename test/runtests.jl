@@ -33,7 +33,7 @@ quote module TestMesh
   )
   @test volume(edge_geo) == 2.
 
-  mesh = Mesh(Edge)
+  mesh = Mesh{Edge}()
   x = [0, 1]
   N = 1e6
   h = (x[2]-x[1])/(N+1)
@@ -174,6 +174,16 @@ let mf=MeshFunction(Union{Polytope"3-node triangle", Polytope"4-node quadrangle"
   empty!(mf)
   @test length(mf) == 0
 end
+@info " - ∪ operation"
+let mf1 = MeshFunction(Polytope"3-node triangle", Int, Val{false}())
+    mf2 = MeshFunction(Polytope"3-node triangle", Int, Val{false}())
+  push!(mf1, Id"3-node triangle"(1), 1)
+  push!(mf2, Id"3-node triangle"(2), 2)
+
+  mf = mf1 ∪ mf2
+  @test domain(mf) == [Id{Polytope"3-node triangle"}(1), Id{Polytope"3-node triangle"}(2)]
+  @test image(mf) == [1, 2]
+end
 
 ################################################################################
 # cell connectivity
@@ -181,7 +191,7 @@ end
 #c1 = Connectivity"3-node triangle → 1-node point"(1, 2, 3)
 @info "Testing mesh interface"
 @info " - homogenous mesh with triangular elements"
-let mesh = Mesh(Polytope"3-node triangle")
+let mesh = Mesh{Polytope"3-node triangle"}()
   # add some vertices
   add_vertex!(mesh, 0, 0)
   add_vertex!(mesh, 0, 1)
@@ -211,7 +221,7 @@ end
 #  |       |       |
 #  |       |       |
 # v0 ---- v1 ---- v4
-let mesh = Mesh(Polytope"4-node quadrangle")
+let mesh = Mesh{Polytope"4-node quadrangle"}()
   # add some vertices
   add_vertex!(mesh, 0, 0)
   add_vertex!(mesh, 0, 1)
@@ -238,7 +248,7 @@ let mesh = Mesh(Polytope"4-node quadrangle")
   @test length(topology(mesh)[Polytope"2-node line"]) == 7
 end
 @info " - heterongenous mesh with triangular and quadrilateral elements"
-let mesh = Mesh(Union{Polytope"3-node triangle", Polytope"4-node quadrangle"})
+let mesh = Mesh{Union{Polytope"3-node triangle", Polytope"4-node quadrangle"}}()
   # add some vertices
   add_vertex!(mesh, 0, 0)
   add_vertex!(mesh, 0, 1)
@@ -287,7 +297,7 @@ end
 # type stability
 #
 @info "Testing type stability"
-let mesh = Mesh(Polytope"4-node quadrangle")
+let mesh = Mesh{Polytope"4-node quadrangle"}()
   # add some vertices
   add_vertex!(mesh, 0, 0)
   add_vertex!(mesh, 0, 1)

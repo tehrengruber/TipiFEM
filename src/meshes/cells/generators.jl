@@ -1,9 +1,10 @@
 """
 Generate face_count(::Type{T}, ::Type{...}) methods for a cell T
 """
-function generate_face_count_methods(::Type{T}) where T <: Cell
+function generate_face_count_methods(mod, ::Type{T}) where T <: Cell
   dim(T) != 0 || return # vertices have no faces
   expr = Expr(:block)
+  push!(expr.args, :(import TipiFEM.Meshes: face_count))
   if dim(T) == 1
     push!(expr.args, quote
       face_count(::Type{$(T)}, ::Type{$(vertex(T))}) = $(vertex_count(T))
@@ -20,15 +21,16 @@ function generate_face_count_methods(::Type{T}) where T <: Cell
   else
     error("Unexpected dimension. $(T) has dimension $(dim(T))")
   end
-  eval(expr)
+  mod.eval(expr)
 end
 
 """
 Generate facet(::Connectivity{T, ...}) and facet(::Geometry{T, ...}) methods
 """
-function generate_facets_methods(::Type{T}) where T <: Cell
+function generate_facets_methods(mod, ::Type{T}) where T <: Cell
   dim(T) != 0 || return # vertices have no facets
   exprs = Expr(:block)
+  push!(exprs.args, :(import TipiFEM.Meshes: facets))
   if dim(T) == 1
     push!(exprs.args, :(facets(cell::Connectivity{$(T), $(vertex(T))}) = cell.data))
   elseif dim(T) >= 1
@@ -70,7 +72,7 @@ function generate_facets_methods(::Type{T}) where T <: Cell
   else
     error("Unexpected dimension. $(T) has dimension $(dim(T))")
   end
-  eval(exprs)
+  mod.eval(exprs)
 end
 
 # add cell initializers

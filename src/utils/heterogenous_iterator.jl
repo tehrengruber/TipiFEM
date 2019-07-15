@@ -1,5 +1,5 @@
 import Base: length, size, eltype, map, mapfoldl, zip, collect, map, zip,
-             collect, mapreduce, mapfoldl
+             collect, mapreduce, mapfoldl, copy
 
 # Concatenate the output of n iterators
 struct HeterogenousIterator{T, Ts <: Tuple}
@@ -92,3 +92,7 @@ mapfoldl(f, op, v0, it::HeterogenousIterator) = reduce(op, v0, (mapreduce(f, op,
 zip(it1::HeterogenousIterator, it2::HeterogenousIterator) = compose(map((link1, link2) -> zip(link1, link2), it1.iters, it2.iters))
 collect(it::HeterogenousIterator) = compose(map(link -> collect(link), it.iters))
 foreach(f, it::HeterogenousIterator) = foreach(iter -> foreach(f, iter), it.iters)
+
+function copy(it::HI) where HI <: HeterogenousIterator
+  HI(map(copy, it.iters))
+end

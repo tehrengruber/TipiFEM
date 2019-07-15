@@ -1,4 +1,4 @@
-__precompile__(false)
+#__precompile__(false)
 
 module TipiFEM
 
@@ -15,7 +15,7 @@ export FEBasis, FESpace, interpolation_nodes, add_constraints!, mark_inactive!,
        constraints, number_of_local_shape_functions, local_shape_functions,
        grad_local_shape_functions, number_of_dofs, matrix_assembler,
        vector_assembler, incorporate_constraints!, l2_norm, dofh,
-       interpolation_node_indices
+       interpolation_node_indices, boundary_dofs
 
 include("utils/utils.jl")
 include("meshes/meshes.jl")
@@ -26,10 +26,10 @@ include("fe/fe.jl")
 
 # splice local_shape functions into TipiFEM.PolytopalMesh
 # todo: a bit too hacky
-let expr = quote
-        using TipiFEM: grad_local_shape_functions, local_shape_functions
-    end
-    Base.eval(TipiFEM.PolytopalMesh, expr)
-end
+#let expr = quote
+#        using TipiFEM: grad_local_shape_functions, local_shape_functions
+#    end
+#    Base.eval(TipiFEM.PolytopalMesh, expr)
+#end
 
 end

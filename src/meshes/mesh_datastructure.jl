@@ -111,7 +111,7 @@ julia> populate_connectivity!(mesh);
   end
 end
 
-@generated function Mesh(::Type{K}; simple=Val{true}(), world_dim=nothing) where K <: Cell
+@generated function (::Type{Mesh{K}})(;simple=Val{true}(), world_dim=nothing) where K <: Cell
   # parse world dimension argument
   if world_dim == Nothing
     world_dim_expr = :(dim(K))
@@ -681,19 +681,47 @@ end
 populate_connectivity!(msh::Mesh) = _populate_connectivity!(msh, Val{mesh_dim(msh)}())
 
 function _populate_connectivity!(msh::Mesh{Ks}, mesh_dim::Val{1}) where Ks <: Cell
-  cid_min = vertex_connectivity(msh)[1][1]
-  cid_max = vertex_connectivity(msh)[1][2]
-
-  for (cid, conn) in graph(vertex_connectivity(msh))
-    if conn[1] < cid_min
-      cid_min = conn[1]
+  # initialize connectivity from vertices → segments
+  let conn_t = connectivity_type(cell_type(msh, Dim{1}()), Dim{0}(), Dim{1}())
+    v2s_conn = topology(msh)[Dim{0}(), Dim{1}(), true]
+    set_domain!(v2s_conn, vertices(msh))
+    set_image!(v2s_conn, Vector{conn_t}(undef, length(vertices(msh))))
+    fill!(image(v2s_conn), conn_t(0, 0))
+    for (sid, (geo, conn)) in graph(zip(geometry(msh), vertex_connectivity(msh)))
+      li, ri = geo[1] < geo[2] ? (2, 1) : (1, 2)
+      v2s_conn[conn[li], 1] = sid
+      v2s_conn[conn[ri], 2] = sid
     end
-    if conn[2] > cid_max
-      cid_max = conn[2]
+    mark_populated!(topology(msh), Dim{0}(), Dim{1}())
+  end
+  # intitialize connectivity from segments → segments
+  let conn_t = connectivity_type(cell_type(msh, Dim{1}()), Dim{1}(), Dim{1}())
+    s2s_conn = topology(msh)[Dim{1}(), Dim{1}(), true]
+    set_domain!(s2s_conn, cells(msh, Dim{1}()))
+    set_image!(s2s_conn, Vector{conn_t}(undef, length(vertices(msh))))
+    fill!(image(s2s_conn), conn_t(0, 0))
+    for conn in connectivity(msh, Dim{0}(), Dim{1}())
+      s2s_conn[conn[1], 2] = conn[2]
+      s2s_conn[conn[2], 1] = conn[1]
     end
   end
-
-  cell_groups(msh)[:boundary] = [cid_min, cid_max]
+  # identify boundary cells
+  #  create mesh function from vertices to number of adjacent cells
+  mf = MeshFunction(vertices(msh), zeros(UInt8, length(vertices(msh))))
+  #  iterate over cells/segments and increment adjacency counter for both
+  #   of its vertices
+  for conn in vertex_connectivity(msh)
+    mf[conn[1]] += 1
+    mf[conn[2]] += 1
+  end
+  #  filter out all vertices with only a single adjacent cell. these
+  #   are the boundary cells
+  boundary_cells = Id{cell_type(msh, Dim{0}())}[]
+  for (id, v) in graph(mf)
+    v == 1 && push!(boundary_cells, id)
+  end
+  #  store boundary cells
+  cell_groups(msh)[:boundary] = boundary_cells
   msh
 end
 

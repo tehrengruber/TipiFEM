@@ -125,6 +125,8 @@ basis(::Type{T}) where T <: FESpace = tparam(T, 1)()
 "get dofhandler of the finite element space"
 dofh(fespace::FESpace) = fespace.dofh
 
+boundary_dofs(fespace::FESpace) = boundary_dofs(fespace.dofh)
+
 #import Base.intersect
 #
 #function intersect(fespace1::FESpace, fespace2::FESpace)
@@ -153,7 +155,8 @@ using TipiFEM.Utils: sort_by_indices!
 "add constraints"
 function add_constraints!(fespace::FESpace, name::Symbol, interp_indmap::IndexMapping{<:InterpolationNodeIndex, T}) where T <: Number
   # mark all constrained cells inactive
-  mark_inactive!(fespace, map(interp_node_idx -> interp_node_idx.cid, indices(interp_indmap)))
+  # mark_inactive!(fespace, map(interp_node_idx -> interp_node_idx.cid, indices(interp_indmap)))
+
   # construct a new index mapping from constrained dof indices to their values
   let dofh = dofh(fespace),
     indmap = IndexMapping{Int, T}()
@@ -163,6 +166,14 @@ function add_constraints!(fespace::FESpace, name::Symbol, interp_indmap::IndexMa
     constraints(fespace)[name] = indmap
     indmap
   end
+end
+
+function add_constraints!(fespace::FESpace, tag::Symbol, v::T) where T <: Number
+  interp_node_indices = interpolation_node_indices(fespace, tagged_cells(mesh(fespace), tag))
+  ind_map = TipiFEM.IndexMapping(interp_node_indices,
+    v*ones(T, length(interp_node_indices)))
+
+  add_constraints!(fespace, tag, ind_map)
 end
 
 function add_constraints!(fespace::FESpace, interp_indmap::IndexMapping{<:InterpolationNodeIndex})
@@ -212,7 +223,7 @@ end
 #    $(expr)
 #
 #    result
-#  endnumber_of_dofs
+#  end
 #end
 
 "get all interpolation nodes on the cells `cells`"

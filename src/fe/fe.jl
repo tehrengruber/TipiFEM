@@ -7,7 +7,7 @@ include("fespace.jl")
 include("triplets.jl")
 include("norms.jl")
 
-function matrix_assembler(el_matrix::Function, trial_space::FESpace, test_space::FESpace; matrix_type::Type=Triplets)
+function matrix_assembler(el_matrix::Function, trial_space::FESpace, test_space::FESpace; matrix_type::Type=Triplets, incorporate_constraints=false)
   # select the active cells of lowest amount from the trial and test space
   # note that the selected active cells must be a subset of the not
   #  selected active cells
@@ -18,6 +18,9 @@ function matrix_assembler(el_matrix::Function, trial_space::FESpace, test_space:
     end
     # invoke the actual matrix assembler
     A = matrix_assembler(el_matrix::Function, active_cells, trial_space, test_space)
+
+    # incorporate constraints
+    incorporate_constraints && incorporate_constraints!(trial_space, A)
 
     if matrix_type == Triplets
       return A
@@ -49,7 +52,8 @@ function matrix_assembler(el_matrix_assembler::Function, cells::HomogeneousIdIte
       # get global indices for the current element
       dofs = dofh[cid]
       # get active degrees of freedom
-      isactive = active_dofs(trial_space, cid)
+      isactive_trial = active_dofs(trial_space, cid)
+      isactive_test = active_dofs(test_space, cid)
       # in prior versions dofs belonging to dirichlet nodes in the trial space
       #  were automatically marked inactive. However, we can just disable them
       #@sanitycheck @assert(active_dofs(trial_space, cid) == active_dofs(test_space, cid),
@@ -60,8 +64,7 @@ function matrix_assembler(el_matrix_assembler::Function, cells::HomogeneousIdIte
       # compute and distribute element stiffness matrix
       for i in 1:size(el_mat, 1)
         for j in 1:size(el_mat, 2)
-          if isactive[j]
-          #if isactive[i] && isactive[j] # agumentation
+          if isactive_trial[i] && isactive_test[j]
             push!(triplets, dofs[j], dofs[i], el_mat[i, j])
           end
         end
@@ -130,9 +133,9 @@ extracting the constraints from the FE space, see the actual implementations of
 Note that this functions expects all rows of the galerkin matrix belonging to
 constrained dofs to be zero, i.e. by marking them inactive in the test space.
 """
-function incorporate_constraints!(fespace::FESpace, args...)
+function incorporate_constraints!(fespace::FESpace, args...; kwargs...)
   for (key, constraint) in constraints(fespace)
-    incorporate_constraints!(constraint, args...)
+    incorporate_constraints!(constraint, args...; kwargs...)
   end
 end
 
@@ -153,6 +156,19 @@ function incorporate_constraints!(constraint::IndexMapping, galerkin_matrix::Tri
     end
     push!(dof_processed, dof)
     #galerkin_matrix[dof, dof] = 1
+    # modify rhs vector
+    rhs_vector[dof] = v
+  end
+end
+
+function incorporate_constraints!(constraint::IndexMapping, galerkin_matrix::SparseMatrixCSC, rhs_vector::AbstractVector; perf_warn=true)
+  perf_warn && @warn "Incorporate constraints with Galerkin matrix given SparseMatrixCSC induces significant performance degradation"
+  dof_processed = Set(Int[])
+  for (dof, v) in zip(indices(constraint), values(constraint))
+    if !(dof ∈ dof_processed)
+      galerkin_matrix[dof, dof] = 1.
+    end
+    push!(dof_processed, dof)
     # modify rhs vector
     rhs_vector[dof] = v
   end

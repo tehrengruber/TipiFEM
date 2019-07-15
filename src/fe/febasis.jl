@@ -35,10 +35,10 @@ end
 struct InterpolationNode{world_dim, REAL_T <: Real}
   idx::InterpolationNodeIndex
   coords::SVector{world_dim, REAL_T}
-end
 
-function InterpolationNode(idx::InterpolationNodeIndex, coords::SVector{world_dim, REAL_T}) where {world_dim, REAL_T <: Real}
-  InterpolationNode{world_dim, REAL_T}(idx, coords)
+  function InterpolationNode(idx::InterpolationNodeIndex, coords::SVector{world_dim, REAL_T}) where {world_dim, REAL_T <: Real}
+    new{world_dim, REAL_T}(idx, coords)
+  end
 end
 
 """

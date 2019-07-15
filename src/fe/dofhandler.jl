@@ -97,12 +97,21 @@ degrees of freedom on the cell
       @inbounds result[pos] = offset(dofh, K())+convert(Int, el_idx)+j
       pos+=1
     end
-    result
+    SVector{n, Int}(result)
   end
 end
 
 function getindex(dofh::DofHandler, interp_node_idx::InterpolationNodeIndex{C}) where C <: Cell
   dofh[interp_node_idx.cid][interp_node_idx.lidx]
+end
+
+function boundary_dofs(dofh::DofHandler)
+  let boundary_dofs = Int[]
+    for cid in tagged_cells(dofh.msh, :boundary)
+      append!(boundary_dofs, dofh[cid])
+    end
+    boundary_dofs
+  end
 end
 
 #"cell type associated with a local dof index"

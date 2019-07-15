@@ -18,7 +18,7 @@ abstract type Cell end
   if cd == 0 # end recursion
     T
   elseif typeof(T) == Union
-    Union{subcell(T.a, Codim{cd}()), subcell(T.a, Codim{cd}())}
+    Union{subcell(T.a, Codim{cd}()), subcell(T.b, Codim{cd}())}
   else
     subcell(facet(T), Codim{cd-1}())
   end

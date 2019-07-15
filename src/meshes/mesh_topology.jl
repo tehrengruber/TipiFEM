@@ -10,6 +10,8 @@ using Base: uniontypes
   Union{map(Cis) do Ci
     if i==0 && j == 0
       Nothing
+    elseif i==0 && j == 1
+      fulltype(Connectivity{Ci, Cj})
     elseif i<j
       VariableConnectivity{Cj} # subcell(K, i),
     elseif i==j
@@ -54,12 +56,15 @@ end
   T
 end
 
-add_cell_initializer(hybrid=true) do K
-  @eval function topology_tuple_type(::Type{$(K)}, simple::Bool) where K <: Cell
-    if simple
-      $(topology_tuple_type(K, true, warn=false))
-    else
-      $(topology_tuple_type(K, false, warn=false))
+add_cell_initializer(hybrid=true) do mod, K
+  @eval mod begin
+    import TipiFEM.Meshes: topology_tuple_type
+    function topology_tuple_type(::Type{$(K)}, simple::Bool) where K <: Cell
+      if simple
+        $(topology_tuple_type(K, true, warn=false))
+      else
+        $(topology_tuple_type(K, false, warn=false))
+      end
     end
   end
 end

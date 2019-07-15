@@ -9,9 +9,9 @@ function _one_time_visitor_mf_type(@nospecialize(K); warn=true)
     (Type{Union{skeleton(K)...}}, Type{Int})))
 end
 
-add_cell_initializer() do K
+add_cell_initializer() do mod, K
   dim(K) != 0 || return
-  @eval Base.@pure _one_time_visitor_mf_type(::Type{$(K)}) where K <: Cell = $(_one_time_visitor_mf_type(K, warn=false))
+  @eval mod Base.@pure _one_time_visitor_mf_type(::Type{$(K)}) where K <: Cell = $(_one_time_visitor_mf_type(K, warn=false))
 end
 
 function OneTimeCellVisitorState(mesh::M) where M <: Mesh

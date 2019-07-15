@@ -39,10 +39,10 @@ using TipiFEM.Utils: MethodNotImplemented
 const registered_cell_types = Array{Type{<:Cell}, 1}()
 
 # define generic functions to be imported by a mesh implementation
-for method in [:reference_element, :facets, :volume, :jacobian_transposed,
+for method in [:jacobian_transposed,
                :jacobian_inverse_transposed, :local_to_global,
                :point, :integration_element, :is_cannonical,
-               :canonicalize_connectivity, :flip_orientation, :normal]
+               :flip_orientation, :normal]
   @eval $(method)(::MethodNotImplemented) = error("Method not implemented")
 end
 

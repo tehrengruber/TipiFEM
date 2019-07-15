@@ -1,6 +1,6 @@
 macro import_mesh_interface()
   quote
-    import TipiFEM.Meshes: dim, coordinates, vertex_count, vertices, subcell,
+    import TipiFEM.Meshes: dim, vertex_count, vertices, subcell,
                            connectivity, facet, face_count, facets, volume,
                            local_to_global, jacobian_transposed, jacobian_inverse_transposed,
                            reference_element, integration_element, canonicalize_connectivity,
@@ -13,7 +13,7 @@ macro export_mesh_interface(cell_type)
     using InteractiveUtils: subtypes
 
     # export mesh interface
-    export dim, coordinates, vertex_count, vertices, boundary, subcell, volume, facet, face_count
+    export dim, vertex_count, vertices, boundary, subcell, volume, facet, face_count
     let cell_types = typeof($(cell_type)) <: AbstractArray ? $(cell_type) : subtypes($(cell_type))
       # export cell types
       for st in cell_types
@@ -29,7 +29,7 @@ macro export_mesh_interface(cell_type)
           if isa(st, Union) && !attributes[:hybrid]
             continue
           end
-          initializer(st)
+          initializer(@__MODULE__, st)
         end
       end
     end

@@ -29,7 +29,10 @@ type `T1` is fixed return the number of incident cells.
   #  ERROR: TypeError: resize!: in typeassert, expected Connectivity{K, K, 3}
   #    got Connectivity{K, K,3}
   !(dim(T1) == 0 && dim(T2) == 0) || error("incidence relation between vertices is not defined")
-  if dim(T1) == dim(T2)
+  if dim(T1) == 0 && dim(T2) == 1
+    @assert face_count(T2, T1) == 2
+    face_count(T2, T1)
+  elseif dim(T1) == dim(T2)
     face_count(T1, subcell(T2))
   elseif dim(T1) > dim(T2)
     face_count(T1, T2)
@@ -47,7 +50,11 @@ end
     data::NTuple{incidentee_count(T1, T2), Id{T2}}
 
     function (::Type{Connectivity{T1, T2}})(in::NTuple{N, IT}) where {T1 <: Cell, T2 <: Cell, N, IT}
-      @boundscheck all(x->x!=0, in) || error("Cell ids must be non zero")
+      # cell ids must not be zero for connectivities between cells and their
+      #  subcells
+      @boundscheck if dim(T1) > dim(T2) && any(x->x==0, in)
+        error("cell ids must be non zero")
+      end
       new(in)
     end
 end
@@ -105,7 +112,7 @@ const NeighbourConnectivity{C <: Cell} = Connectivity{C, C}
 #
 # VariableConnectivity
 #
-const VariableConnectivity{FACE <: Cell} = Array{Id{FACE}, 1} # K <: Cell,
+const VariableConnectivity{FACE <: Cell} = Vector{Id{FACE}} # K <: Cell,
 
 #
 # NeighbourConnectivity
