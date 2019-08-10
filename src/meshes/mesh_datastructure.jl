@@ -3,6 +3,8 @@ using SimpleRepeatIterator
 using TipiFEM.Utils: type_scatter, flatten
 export subcell, world_dim, number_of_vertices
 
+import TipiFEM: real_type
+
 # todo: add invalid flag to all cell entities
 
 using Base: OneTo
@@ -371,10 +373,9 @@ function connectivity(mesh::M, ids::HomogeneousIdIterator{C}) where {C <: Cell, 
   @assert typeof(C) == DataType "Only a single cell type allowed"
   let vertex_coordinates = vertex_coordinates(mesh),
       mesh_conn = connectivity(mesh, C(), Dim{0}())
-    mesh_geo = MeshFunction(C, Geometry{C, world_dim(M), real_type(M)}, Val{false}())
-    #resize!(mesh_geo, length(ids))
+    mesh_geo = MeshFunction(ids, Geometry{C, world_dim(M), real_type(M)})
     for id in ids
-      push!(mesh_geo, id, map(vidx -> vertex_coordinates[vidx], mesh_conn[id]))
+      @inbounds mesh_geo[id] = StaticArrays.SArray{Tuple{2},Float64,1,2}(1, 2)
     end
     mesh_geo
   end
@@ -697,13 +698,18 @@ function _populate_connectivity!(msh::Mesh{Ks}, mesh_dim::Val{1}) where Ks <: Ce
   # intitialize connectivity from segments → segments
   let conn_t = connectivity_type(cell_type(msh, Dim{1}()), Dim{1}(), Dim{1}())
     s2s_conn = topology(msh)[Dim{1}(), Dim{1}(), true]
-    set_domain!(s2s_conn, cells(msh, Dim{1}()))
-    set_image!(s2s_conn, Vector{conn_t}(undef, length(vertices(msh))))
+    set_domain!(s2s_conn, elements(msh))
+    set_image!(s2s_conn, Vector{conn_t}(undef, length(elements(msh))))
     fill!(image(s2s_conn), conn_t(0, 0))
     for conn in connectivity(msh, Dim{0}(), Dim{1}())
-      s2s_conn[conn[1], 2] = conn[2]
-      s2s_conn[conn[2], 1] = conn[1]
+      if conn[1] != 0
+        s2s_conn[conn[1], 2] = conn[2]
+      end
+      if conn[2] != 0
+        s2s_conn[conn[2], 1] = conn[1]
+      end
     end
+    mark_populated!(topology(msh), Dim{1}(), Dim{1}())
   end
   # identify boundary cells
   #  create mesh function from vertices to number of adjacent cells
@@ -924,6 +930,7 @@ end
 #      # - the edges have no identity
 #      ul_edges = flatten(map(facets, el_conn))
 #      # store local indices
+#      #  use SimpleRepeatIterator for speed
 #      ul_edges_lidx = MeshFunction(domain(ul_edges), repeat(1:vertex_count(K), outer=length(el_conn)))
 #      # allocate mesh function for the incidence relation codim 0 -> codim 1
 #      el_facets = MeshFunction(K, Connectivity{K, subcell(K)})

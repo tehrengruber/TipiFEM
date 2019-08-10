@@ -11,7 +11,8 @@ export Mesh, add_vertex!, add_cell!, Id, LocalDOFIndex, world_dim, mesh_dim, mes
        IdIterator, HomogeneousIdIterator,HeterogenousIdIterator, GenericIdIterator,
        issimple, parent_type, hasparent, world_dim, cell_type,
        set_domain!, set_image!, tag_cells!, tag_vertices!, number_of_elements, Cell,
-       is_cannonical, canonicalize_connectivity, flip_orientation, element_type, normal
+       is_cannonical, canonicalize_connectivity, flip_orientation, element_type, normal,
+       midpoint
 
 using StaticArrays
 using ComputedFieldTypes
@@ -42,7 +43,7 @@ const registered_cell_types = Array{Type{<:Cell}, 1}()
 for method in [:jacobian_transposed,
                :jacobian_inverse_transposed, :local_to_global,
                :point, :integration_element, :is_cannonical,
-               :flip_orientation, :normal]
+               :flip_orientation, :normal, :global_to_local, :midpoint]
   @eval $(method)(::MethodNotImplemented) = error("Method not implemented")
 end
 

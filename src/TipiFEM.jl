@@ -2,6 +2,12 @@
 
 module TipiFEM
 
+if VERSION < v"1.3.0-DEV"
+  @warn """TipiFEM with julia version prior to 1.3 is subject to significant
+           performance degradation in some situations due to type instability
+           issues. Be warned."""
+end
+
 # todo: remove
 #import Base.eltype
 #function eltype(G::Base.Generator)
@@ -15,7 +21,8 @@ export FEBasis, FESpace, interpolation_nodes, add_constraints!, mark_inactive!,
        constraints, number_of_local_shape_functions, local_shape_functions,
        grad_local_shape_functions, number_of_dofs, matrix_assembler,
        vector_assembler, incorporate_constraints!, l2_norm, dofh,
-       interpolation_node_indices, boundary_dofs
+       interpolation_node_indices, boundary_dofs, BrokenFESpace, DiscontinuousFEFunction,
+       project!, sample
 
 include("utils/utils.jl")
 include("meshes/meshes.jl")

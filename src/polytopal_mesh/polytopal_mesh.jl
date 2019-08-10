@@ -5,7 +5,7 @@ using TipiFEM.Meshes
 
 export @Polytope_str, @Id_str, @Connectivity_str,
        jacobian_transposed, jacobian_inverse_transposed,
-       IntervalMesh, TriangularMesh, HybridMesh2D
+       IntervalMesh, TriangularMesh, HybridMesh2D, global_to_local
 
 @import_mesh_interface
 

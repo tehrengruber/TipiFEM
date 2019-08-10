@@ -183,16 +183,17 @@ on the reference element map them to coordinates on `G`.
 """
 @generated function local_to_global(geo::Geometry{C, world_dim},
     x̂s::SMatrix{n, local_dim, T}) where {C <: Polytope, world_dim, local_dim, n, T<:Real}
-  expr = Expr(:call, :hcat)
-  for d in 1:world_dim
-    push!(expr.args, :(dot(geo[:, $(d)], lsfns)))
+  lsfns_hcatted = Expr(:hcat)
+  for i in 1:vertex_count(C)
+    push!(lsfns_hcatted.args, :(lsfns[$(i)]))
   end
 
   quote
     # evaluate local shape functions
     #  the i-th index contains the values of the i-th local shape function
     lsfns = local_shape_functions(FEBasis{:Lagrangian, 1}(), C(), x̂s)
-    $(expr)
+
+    return $(lsfns_hcatted)*geo
   end
 end
 
@@ -202,12 +203,48 @@ end
 
 function local_to_global(geo::Geometry{Polytope"2-node line", world_dim},
     x̂s::SVector{n, T}) where {world_dim, n, T<:Real}
-  convert(SVector{world_dim, T},  local_to_global(geo, SMatrix{n, 1, T}(x̂s)))
+  convert(SVector{n, T},  local_to_global(geo, SMatrix{n, 1, T}(x̂s)))
 end
 
 function local_to_global(geo::Geometry{Polytope"2-node line", world_dim},
     x̂::T) where {world_dim, T<:Real}
   local_to_global(geo, SMatrix{1, 1, T}(x̂))'
+end
+
+function global_to_local(geo::Geometry{Polytope"2-node line", 1}, xs::SMatrix{n, 1, T}) where {n, T<:Real}
+  length = volume(geo)
+  x̂s = zeros(MVector{n, T})
+  for i in 1:n
+    x̂s[i] = (xs[i]-point(geo, 1))/length
+  end
+  SVector{n, T}(x̂s)
+end
+
+function global_to_local(geo::Geometry{K}, x::SVector{world_dim, T}) where {K <: Cell, world_dim, T <: Real}
+  global_to_local(geo, SMatrix{1, world_dim, T}(x))
+end
+
+function global_to_local(geo::Geometry{Polytope"3-node triangle", 2}, xs::SMatrix{n, 2, T}) where {n, T<:Real}
+  c11, c12 = geo[2, :]-geo[1, :]
+  c21, c22 = geo[3, :]-geo[1, :]
+  c31, c32 = geo[1, :]
+  m = @SMatrix [c11 c21 c31;
+                c12 c22 c32;
+                  1.   1.   1.]
+  x̂s = zeros(MMatrix{n, 2, T})
+  for i in 1:n
+    x̂s[i, 1], x̂s[i, 2], _ = m\@SVector [xs[i, 1], xs[i, 2], 1]
+  end
+  SMatrix{n, 2, T}(x̂s)
+end
+
+function global_to_local(geo::Geometry{Polytope"2-node line", world_dim}, xs::SMatrix{n, world_dim, T}) where {world_dim, n, T<:Real}
+  length = volume(geo)
+  x̂s = zeros(MVector{n, T})
+  for i in 1:n
+    x̂s[i] = norm(xs[i, :]-point(geo, 1))/length
+  end
+  SVector{n, T}(x̂s)
 end
 
 #function local_to_global{G <: Geometry{Polytope"3-node triangle"}, REAL_ <: Real}(geo::G, x::SVector{2, REAL_})

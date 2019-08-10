@@ -1,5 +1,6 @@
-using TipiFEM.Utils: MethodNotImplemented
 using Base: @pure
+using TipiFEM.Utils: MethodNotImplemented, @typeinfo
+using TraitDispatch
 
 export @Polytope_str, Polytope, vertex_count, @Id_str, @Connectivity_str, vertex, Connectivity
 
@@ -13,7 +14,7 @@ abstract type Cell end
 ################################################################################
 # see https://en.wikipedia.org/wiki/N-skeleton
 @pure skeleton(::Type{T}) where {T <: Cell} = dim(T) > 0 ? (skeleton(facet(T))..., T) : (T,)
-@dim_dispatch @Base.pure skeleton(::Type{T}, ::Dim{d}) where {T <: Cell, d} = skeleton(T)[1:d+1]
+@dim_dispatch @pure skeleton(::Type{T}, ::Dim{d}) where {T <: Cell, d} = skeleton(T)[1:d+1]
 @Base.pure function subcell(::Type{T}, ::Codim{cd}) where {T <: Cell, cd}
   if cd == 0 # end recursion
     T
@@ -36,13 +37,19 @@ end
 #@Base.pure facet_count(::Type{Union{C, _}}) where {C <: Cell, _} = Union{facet(UT.a), facet(UT.b)}
 @Base.pure face_count(::Type{C}, ::Type{C}) where {C <: Cell} = 1
 @Base.pure facet_count(::Type{C}) where {C <: Cell} = face_count(C, facet(C))
-@Base.pure function dim(::Type{UT}) where {UT <: Union{Cell, Union}}
+@Base.pure function dim(::Type{UT}) where {UT <: Union{Cell, Union}} # todo: just wrong
   @assert dim(UT.a)==dim(UT.b)
   dim(UT.a)
 end
 @Base.pure dim_t(::Type{T}) where {T<:Cell} = Dim{dim(T)}()
 @Base.pure complement(::Type{K}, ::Dim{i}) where {K <: Cell, i}= Codim{dim(K)-i}()
 @Base.pure complement(::Type{K}, ::Codim{i}) where {K <: Cell, i} = Dim{dim(K)-i}()
+
+@pure is_union_of_cell_types(::Type{K}) where K <: Cell = (typeof(K) == Union)
+
+"given a cell type or a union thereof return if all types are concrete"
+@traitfn @generated is_concrete_cell_type(::Type{K}) where {K <: Cell; is_union_of_cell_types{K}} = is_concrete_cell_type(K.a) && is_concrete_cell_type(K.b)
+@traitfn @generated is_concrete_cell_type(::Type{K}) where {K <: Cell; !is_union_of_cell_types{K}} = isconcretetype(K)
 
 ################################################################################
 # cell interface
@@ -78,7 +85,7 @@ const TypedIdIterator = Union{HomogeneousIdIterator, HeterogenousIdIterator}
 
 const IdIterator = Union{GenericIdIterator, TypedIdIterator}
 
-cell_type(::Union{T, Type{T}}) where T <: Union{HomogeneousIdIterator, HeterogenousIdIterator} = cell_type(eltype(T))
+@typeinfo cell_type(::Type{T}) where T <: Union{HomogeneousIdIterator, HeterogenousIdIterator} = cell_type(eltype(T))
 
 function IdIterator(::Union{Type{C}, C}) where C <: Cell
   if typeof(C) == Union

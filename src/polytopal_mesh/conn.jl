@@ -13,6 +13,10 @@ facets(::Type{Polytope"3-node triangle"}) = (
   (Polytope"2-node line", (2, 3)),
   (Polytope"2-node line", (3, 1)))
 
+facets(::Type{Polytope"2-node line"}) = (
+  (Polytope"1-node point", (1)),
+  (Polytope"1-node point", (2)))
+
 #face_count(::Type{Polytope"3-node triangle"}, ::Type{Polytope"2-node line"}) = 3
 #face_count(::Type{Polytope"4-node quadrangle"}, ::Type{Polytope"2-node line"}) = 4
 

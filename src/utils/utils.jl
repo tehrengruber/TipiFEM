@@ -1,10 +1,12 @@
 module Utils
 
-import Base.Iterators.flatten
-import Base: iterate
+using Base: @pure
 
 using MacroTools
 using MacroTools: postwalk, prewalk
+
+import Base.Iterators.flatten
+import Base: iterate
 
 export flatten, type_scatter, type_gather, @sanitycheck, @apply_pure
 
@@ -37,7 +39,7 @@ Given a tuple of types returns a tuple of types with all Union
 types expanded as tuples
 """
 type_scatter(t::Tuple) = map(type_scatter, t)
-type_scatter(t::Type) = t
+type_scatter(t::Type) = (t,)
 type_scatter(u::Union) = (Base.uniontypes(u)...,)
 
 type_gather(t::Tuple) = map(e -> isa(e, Tuple) ? Union{e...} : e, t)
@@ -111,6 +113,14 @@ import Base.zeros
   expr
 end
 
+@generated function tparams(::Type{T}) where T
+  # extract data type
+  while !isa(T, DataType)
+    T = T.body
+  end
+  :($((T.parameters...,)))
+end
+
 @Base.pure function tparam(T::Type, i::Int)
   isa(T, UnionAll) || isa(T, DataType) || error("$(T) is neither a DataType nor a UnionAll")
   # extract data type
@@ -121,6 +131,32 @@ end
   isa(T.parameters[i], TypeVar) && error("the i-th tparam of $(T) is not bound")
   #
   T.parameters[i]
+end
+
+@Base.pure @generated function tparam(::Type{T_}, s::Symbol) where T_
+  T=T_
+  isa(T, UnionAll) || isa(T, DataType) || error("$(T) is neither a DataType nor a UnionAll")
+  # extract data type
+  while !isa(T, DataType)
+    T = T.body
+  end
+  # we need the name of the parametric types which are stored here
+  T′ = T.name.wrapper
+  while !isa(T′, DataType)
+    T′ = T′.body
+  end
+  param_names = map(typevar -> typevar.name, [T′.parameters...])
+  quote
+    param_names = $(param_names)
+    T = $(T)
+    # find index of the type parameter
+    i = findfirst(isequal(s), param_names)
+    i!=nothing || error("Type $(T) has no type parameter named $(s)")
+    # check that i is not a free type var
+    isa(T.parameters[i], TypeVar) && error("the tparam named $(s) of $(T) is not bound")
+    #
+    T.parameters[i]
+  end
 end
 
 """
@@ -366,6 +402,51 @@ end
 
 iterate(v::ZippedVector, state=1) = state > length(v) ? nothing : (v[state], state+1)
 
+macro replace(expr, old, new)
+  esc(:($(MacroTools.prewalk)(subex -> subex == $(Expr(:quote, old)) ? $(Expr(:quote, new)) : subex, $expr)))
+end
+
+# dropdims in Base for StaticArray is slow, this one is constant folded if the arguments
+#  of the enclosing function are known at compile time
+# julia> v=@SMatrix[1 2;]
+# julia> f(v) = fastdropdims(v, (1,))
+# julia> @code_native debuginfo=:none f(v)
+#	.text
+#	vmovups	(%rsi), %xmm0
+#	vmovups	%xmm0, (%rdi)
+#	movq	%rdi, %rax
+#	retq
+#	nopl	(%rax)
+
+using StaticArrays
+
+@inline function fastdropdims(A::StaticArray, dims::Dims{N}) where N
+  reshape(A, _dropdims_helper(dims, ndims(A), axes(A)))
+end
+
+@inline function fastdropdims(A::SVector{1}, dims::Dims{N}) where N
+  #@assert dims[1]==1
+  A[1]
+end
+
+@pure function _dropdims_helper(dims, ndims, axes)
+  for i in 1:length(dims)
+      1 <= dims[i] <= ndims || throw(ArgumentError("dropped dims must be in range 1:ndims(A)"))
+      length(axes[dims[i]]) == 1 || throw(ArgumentError("dropped dims must all be size 1"))
+      for j = 1:i-1
+          dims[j] == dims[i] && throw(ArgumentError("dropped dims must be unique"))
+      end
+  end
+
+  d = ()
+  for i = 1:ndims
+      if !in(i, dims)
+          d = tuple(d..., axes[i])
+      end
+  end
+  d
+end
+
 #
 # Heterogenous vector
 #
@@ -375,4 +456,6 @@ include("heterogenous_vector.jl")
 # HeterogenousIterator
 #
 include("heterogenous_iterator.jl")
+
+include("zip.jl")
 end

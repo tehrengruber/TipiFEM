@@ -35,8 +35,8 @@ for op in (:+, :-, :<, :>, :<=, :>=, :(==))
     end
 end
 
-## convenience macro for functions that dispatch on types
-# helper function
+# convenience macro for functions that dispatch on types
+#  helper function
 function is_dim_arg(arg)
   isa(arg, Symbol) && return false
   if arg.head == :kw

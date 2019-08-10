@@ -4,8 +4,10 @@ using TipiFEM.Utils: @sanitycheck
 include("febasis.jl")
 include("dofhandler.jl")
 include("fespace.jl")
+include("broken_fespace.jl")
 include("triplets.jl")
 include("norms.jl")
+include("fefunctions.jl")
 
 function matrix_assembler(el_matrix::Function, trial_space::FESpace, test_space::FESpace; matrix_type::Type=Triplets, incorporate_constraints=false)
   # select the active cells of lowest amount from the trial and test space

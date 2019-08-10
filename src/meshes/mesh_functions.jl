@@ -1,15 +1,18 @@
+using Base: OneTo
+using StaticArrays
+
 import Base: eltype, length, getindex, append!, push!,
               sort, getindex, setindex!, size, map, zip, eltype,
               empty!, iterate
 
+import TipiFEM.Utils: compose, decompose, flatten, indices
+
 export domain, image, graph, idxtype, cell_type, reserve, indices
 
-using StaticArrays
-using Base: OneTo
-import TipiFEM.Utils: compose, decompose, flatten, indices
 # note if the mesh function needs to communicate with the mesh we should
 #  do this by means of events
 # todo: ensure that the indices are sorted
+# todo: cleanup constructors
 
 """
 Discrete function that takes an index of cells with fixed dimension mapping
@@ -41,7 +44,18 @@ Construct a mesh function with domain `indices` and image `values`
 function MeshFunction(indices::II, values::VI) where {II <: Union{AbstractArray, AbstractRange, HeterogenousIterator}, VI}
   length(size(values)) == 1 || error("MeshFunctions may only be initialized from 1-dimensional arrays")
   let K = cell_type(eltype(indices)), V = fulltype(eltype(values))
-    find_appropriate_mesh_function(K, V){K, V}(indices, values)
+    MeshFunction{K, V}(indices, values)
+  end
+end
+
+function MeshFunction{K, V}(indices::II, values::VI) where {K <: Cell, V, II <: Union{AbstractArray, AbstractRange, HeterogenousIterator}, VI}
+  length(size(values)) == 1 || error("MeshFunctions may only be initialized from 1-dimensional arrays")
+  find_appropriate_mesh_function(K, V){K, V}(indices, values)
+end
+
+function MeshFunction(indices::II, ::Type{V}) where {II <: Union{AbstractArray, AbstractRange, HeterogenousIterator}, V}
+  let K = cell_type(eltype(indices))
+    find_appropriate_mesh_function(K, V)(indices, V) # todo: homogenize constructors
   end
 end
 
@@ -51,13 +65,16 @@ function MeshFunction(::Type{II}, ::Type{VI}) where {II, VI}
   end
 end
 
-# todo: implement ∪
-
-#todo: rename into compose
 compose(mfs::MeshFunction...) = HeterogenousMeshFunction(mfs)
 
-import Base: length, size, indices, eltype, map, foreach, eltype
+#
+# GraphIterator
+#
+import Base: length, size, indices, eltype, map, foreach, eltype, getindex, unsafe_getindex
 import Base.Iterators: IteratorSize, IteratorEltype
+
+using TipiFEM.Utils: Zip2, zip2
+
 struct GraphIterator{II, VI}
   indices::II
   values::VI
@@ -67,13 +84,17 @@ length(z::GraphIterator) = Base.Iterators._min_length(z.indices, z.values, Itera
 size(z::GraphIterator) = promote_shape(size(z.indices), size(z.values))
 indices(z::GraphIterator) = promote_shape(indices(z.indices), indices(z.values))
 eltype(::Type{GraphIterator{I1,I2}}) where {I1,I2} = Tuple{eltype(I1), eltype(I2)}
-iterate(iter::GraphIterator) = iterate(zip(iter.indices, iter.values))
-iterate(iter::GraphIterator, state) = iterate(zip(iter.indices, iter.values), state)
+iterate(iter::GraphIterator) = iterate(zip2(iter.indices, iter.values))
+iterate(iter::GraphIterator, state) = iterate(zip2(iter.indices, iter.values), state)
 map(f::Function, z::GraphIterator) = MeshFunction(z.indices, map(f, z.indices, z.values))
 foreach(f::Function, z::GraphIterator) = foreach(f, z.indices, z.values)
 
-IteratorSize(::Type{GraphIterator{I1,I2}}) where {I1,I2} = Base.Iterators.zip_iteratorsize(IteratorSize(I1),IteratorSize(I2))
-IteratorEltype(::Type{GraphIterator{I1,I2}}) where {I1,I2} = Base.Iterators.and_iteratoreltype(IteratorEltype(I1),IteratorEltype(I2))
+getindex(iter::GraphIterator, i::Int64) = (iter.indices[i], iter.values[i])
+
+unsafe_getindex(A::GraphIterator, I...) = @inbounds getindex(A, I...)
+
+IteratorSize(::Type{GraphIterator{I1,I2}}) where {I1,I2} = IteratorSize(Zip2{Tuple{I1,I2}})
+IteratorEltype(::Type{GraphIterator{I1,I2}}) where {I1,I2} = IteratorEltype(Zip2{Tuple{I1,I2}})
 
 graph(mf::MeshFunction) = GraphIterator(domain(mf), image(mf))
 @typeinfo idxtype(::Type{MeshFunction{K, V}}) where {K, V} = Union{map(K -> Id{K}, uniontypes(K))...}
@@ -82,6 +103,11 @@ graph(mf::MeshFunction) = GraphIterator(domain(mf), image(mf))
 @typeinfo idxtype(::Type{MF}) where {MF <: MeshFunction} = idxtype(supertype(MF))
 @typeinfo cell_type(::Type{MF}) where {MF <: MeshFunction} = cell_type(supertype(MF))
 @typeinfo cell_types(::Type{MF}) where {MF <: MeshFunction} = cell_types(supertype(MF))
+
+#
+# AbstractArray interface
+#
+import Base: map!
 
 eltype(mf::MeshFunction) = eltype(image(mf))
 length(mf::MeshFunction) = length(image(mf))
@@ -98,7 +124,6 @@ function size(mf::MeshFunction)
   size(domain(mf))
 end
 
-import Base: map!
 function map!(f::Function, dest::MeshFunction, coll::MeshFunction)
   @assert domain(dest) === domain(coll)
   map!(f, image(dest), image(coll))
@@ -120,23 +145,26 @@ mf = zip(mf1, mf2)
 """
 function zip(mf::MeshFunction...)
   domain(mf1)==domain(mf2) || throw(ArgumentError("domain of each mesh function must match"))
-  MeshFunction(domain(mf1), zip(image(mf1), image(mf2)))
+  MeshFunction(domain(mf1), zip2(image(mf1), image(mf2)))
 end
 
 function zip(mf1::MeshFunction, mf2::MeshFunction)
   domain(mf1)==domain(mf2) || throw(ArgumentError("domain of each mesh function must match"))
-  MeshFunction(domain(mf1), zip(image(mf1), image(mf2)))
+  MeshFunction(domain(mf1), zip2(image(mf1), image(mf2)))
 end
 
-"""
-construct a new mesh function with only the values in the i-th row
-of each element in mf
-"""
-function getindex(mf::MeshFunction, i::Int, j::Colon)
-  assert(eltype(mf) <: StaticVector)
-  MeshFunction(domain(mf), reinterpret(eltype(eltype(mf)), image(mf), (size(eltype(mf), 1), length(mf)))[i, j])
-end
+#"""
+#Construct a new mesh function with only the values in the i-th row
+#of each element in mf
+#"""
+#function getindex(mf::MeshFunction, i::Int, j::Colon)
+#  @assert eltype(mf) <: StaticVector
+#  MeshFunction(domain(mf), reinterpret(eltype(eltype(mf)), image(mf), (size(eltype(mf), 1), length(mf)))[i, j])
+#end
 
+#
+# IO
+#
 import Base: summary
 
 summary(mf::MeshFunction) = "$(length(mf)) element $(typeof(mf).name.name) $(cell_type(mf)) → $(eltype(mf))"
@@ -175,6 +203,7 @@ function show(io::IO, ::MIME"text/plain", mf::MeshFunction; tree=false)
   end
 end
 
+#--------------------------------------------------------------------------------
 #
 # HomogenousMeshFunction
 #
@@ -210,9 +239,14 @@ end
 
 HomogenousMeshFunction(::Type{K}, ::Type{V}) where {K, V} = HomogenousMeshFunction(K, V, Val{true}())
 
+# todo: shall we require II and VI to be subtype of AbstractArray
 function HomogenousMeshFunction(indices::II, values::VI) where {II, VI}
   @assert eltype(indices) <: Id "eltype(indices) = $(eltype(indices)) must be a subtype of $(Id)"
   HomogenousMeshFunction{cell_type(eltype(indices)), eltype(values)}(indices, values)
+end
+
+function HomogenousMeshFunction(indices::II, ::Type{V}) where {II, V}
+  HomogenousMeshFunction(indices, Vector{fulltype(V)}(undef, length(indices)))
 end
 
 domain(mf::HomogenousMeshFunction) = mf.indices
@@ -230,15 +264,15 @@ Return integer index from cell index
 - If the domain is a generic array we search the complete domain until we find
   the integer index for the given cell index
 """
-_get_idx(mf::HomogenousMeshFunction{<:Cell,<:Any,<:OneTo}, i::Id) = convert(Int, i)
-_get_idx(mf::HomogenousMeshFunction{<:Cell,<:Any,<:UnitRange}, i::Id) = convert(Int, i)-first(domain(mf))+1
-_get_idx(mf::HomogenousMeshFunction, i::Id) = findfirst(isequal(i), domain(mf))
+@inline _get_idx(mf::HomogenousMeshFunction{<:Cell,<:Any,<:OneTo}, i::Id) = convert(Int, i)
+@inline _get_idx(mf::HomogenousMeshFunction{<:Cell,<:Any,<:UnitRange}, i::Id) = convert(Int, i)-first(domain(mf))+1
+@inline _get_idx(mf::HomogenousMeshFunction, i::Id) = findfirst(isequal(i), domain(mf))
 
-getindex(mf::HomogenousMeshFunction, i::Int) = image(mf)[i]
-getindex(mf::HomogenousMeshFunction, i::Id) = mf[_get_idx(mf, i)]
-setindex!(mf::HomogenousMeshFunction, v, i::Int) = image(mf)[i] = v
-setindex!(mf::HomogenousMeshFunction, v, i::Id) = mf[_get_idx(mf, i)] = v
-setindex!(mf::HomogenousMeshFunction, v, i::Id, j::Int) = mf[_get_idx(mf, i), j] = v
+@propagate_inbounds getindex(mf::HomogenousMeshFunction, i::Int) = image(mf)[i]
+@propagate_inbounds getindex(mf::HomogenousMeshFunction, i::Id) = mf[_get_idx(mf, i)]
+@propagate_inbounds setindex!(mf::HomogenousMeshFunction, v, i::Int) = image(mf)[i] = v
+@propagate_inbounds setindex!(mf::HomogenousMeshFunction, v, i::Id) = mf[_get_idx(mf, i)] = v
+@propagate_inbounds setindex!(mf::HomogenousMeshFunction, v, i::Id, j::Int) = mf[_get_idx(mf, i), j] = v
 
 #function &(mf1::HomogenousMeshFunction, mf2::HomogenousMeshFunction)
 #  assert(domain(mf1) == domain(m2))
@@ -248,7 +282,7 @@ setindex!(mf::HomogenousMeshFunction, v, i::Id, j::Int) = mf[_get_idx(mf, i), j]
 "Set the `j`-th element of `mf[i]` to to `v`"
 function setindex!(mf::HomogenousMeshFunction{K, V}, v, i::Int, j::Int) where {K<:Cell, V<:AbstractArray}
   @boundscheck begin
-    i <= length(mf) || throw(BoundsError(mf, i))
+    1 <= i <= length(mf) || throw(BoundsError(mf, i))
     j <= length(eltype(mf)) || throw(BoundsError(mf[i], j))
     @assert isbitstype(eltype(mf)) "eltype(mf) = $(eltype(mf)) is not a bits type"
   end
@@ -291,6 +325,13 @@ end
 
 "Transform the image of the mesh function `mf` by applying `f` to each element"
 map(f::Function, mf::HomogenousMeshFunction) = MeshFunction(domain(mf), map(f, image(mf)))
+
+import Base: fill!
+
+function fill!(mf::HomogenousMeshFunction, v)
+  fill!(image(mf), v)
+  mf
+end
 
 using SimpleRepeatIterator
 

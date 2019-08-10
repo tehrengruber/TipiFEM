@@ -49,43 +49,41 @@ end
 
 # todo: it would be nice if this dispatches only on mesh functions
 #  with eltype <: Geometry
-"""
-Approximate integral of `f` over all cells in `mf`
-"""
-function integrate(f::Function, mf::MeshFunction, order=Val{6})
-  ∫ = (g) -> integrate(f, g, order=order)
-  mapreduce(∫, +, mf)
-end
-
-"""
-Appriximate integral of `f` over cell `geo` with order `order`
-"""
-function integrate(f::Function, geo::G; order=Val{25}) where G <: Geometry
-  integrate_local(x̂ -> f(local_to_global(geo, x̂)), geo, order=order)
-  #w, x_local, s = quadrule(Quadrule{cell_type(G), 3, real_type(G)})
-  ##let Φ = (x)->local_to_global(geo,x), δvol = (x)->integration_element(geo,x)
-  #  sum = zero(real_type(G))
-  #  @fastmath @inbounds @simd for i in 1:length(w)
-  #    sum += w[i] * f(local_to_global(geo, x_local[i])) * integration_element(geo, x_local[i])
-  #  end
-  #  sum*=s
-  #  #s * reduce(+, w .* f.(Φ.(x_local)) .* δvol.(x_local))
-  ##end
-end
 
 using TipiFEM.Utils: tparam
 
 # todo: slow!
 """
-Integrate a function `f̂` that lives on the reference triangle over `geo`
+Integrate a function `f̂` that lives on the reference element over K̂
+
+  ∫_K̂ f̂(x̂) dx̂
+
 """
-function integrate_local(f̂::Function, geo::G, order=Val{25}) where G <: Geometry
-  w, x_local, s = quadrule(Quadrule{cell_type(G), tparam(tparam(order, 1), 1), real_type(G)})
-  sum = zero(real_type(G))
-  @fastmath @inbounds @simd for i in 1:length(w)
-    sum += w[i] * f̂(x_local[i]) * integration_element(geo, local_to_global(geo, x_local[i]))
-  end
-  sum*=s
+function integrate_local(f̂::Function, ::K; rules=nothing) where K <: Cell
+  ωs, x̂s, s = rules[K]
+
+  s*mapreduce((ω, x̂) -> ω * f̂(x̂), +, ωs, x̂s)
+end
+
+"""
+Integrate a function `f̂` that lives on the reference element over K
+
+  ∫_K f̂(Φ⁻¹(x)) dx = ∫_K̂ f̂(x̂) |det(DΦ(x̂))| dx̂
+
+"""
+function integrate_local(f̂::Function, geo::Geometry{K}; rules=nothing) where K <: Cell
+  detDΦ(x̂) = integration_element(geo, x̂)
+  f̂′(x̂) = f̂(x̂)*detDΦ(x̂) # integrand
+
+  integrate_local(f̂′, K(); rules=rules)
+end
+
+function integrate(f::Function, geo::Geometry{K}; rules=nothing) where K <: Cell
+  Φ(x̂) = local_to_global(geo, x̂)
+  detDΦ(x̂) = integration_element(geo, x̂)
+  f̂(x̂) = f(Φ(x̂))*detDΦ(x̂) # integrand
+
+  integrate_local(f̂, K(); rules=rules)
 end
 
 # access to quadrature rule data is given by means of calling this function

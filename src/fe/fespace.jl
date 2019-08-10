@@ -38,6 +38,10 @@ For cell_type(M) beeing Polytope"3-node triangle" this is the following function
   active_cells_mask::active_cells_mask_type(element_type(M))
 end
 
+function active_cells_type(::Type{<:FESpace{<:FEBasis, <:Mesh, <:DofHandler, ID_ITER}}) where ID_ITER <: IdIterator
+  cell_type(eltype(ID_ITER))
+end
+
 function active_cells_mask_type(@nospecialize(K); warn=false)
   warn && @warn "type-unstable version of active_cells_mask_type called for cell type $(K)"
   first(return_types(MeshFunction,
@@ -337,7 +341,7 @@ local interpolation node is active
       # process boundary dofs
       $(boundary_dofs_expr)
 
-      active_dofs
+      SVector{$(n), Bool}(active_dofs)
     end
   end
 end

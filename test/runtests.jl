@@ -319,6 +319,11 @@ let mesh = Mesh{Polytope"4-node quadrangle"}()
   @inferred number_of_cells(mesh, Polytope"2-node line")
   @inferred connectivity(mesh, Codim{0}(), Dim{0}())
   @inferred connectivity(mesh, Codim{0}(), Codim{0}())
+
+  # fails on v1.1
+  if VERSION >= v"1.3.0-DEV"
+    @inferred first(graph(zip(geometry(mesh), geometry(mesh))))
+  end
 end
 
 #
